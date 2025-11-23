@@ -1,0 +1,485 @@
+{
+  "metadata": {
+    "generated_from": "Sample dataset analysis",
+    "categories_analyzed": ["Fashion Products", "Furniture", "Groceries", "Clothes (Sarees)", "Electronics"],
+    "total_relations": 86,
+    "version": "1.1"
+  },
+
+  "seed_relations": {
+
+    "_comment_core": "=== CORE PRODUCT ATTRIBUTES (Universal across all products) ===",
+
+    "HAS_BRAND": {
+      "description": "The manufacturer or brand name of the product",
+      "examples": ["Trendista", "Kingston Brass", "Kellogg's", "Lay's"],
+      "category": "core"
+    },
+
+    "HAS_PRICE": {
+      "description": "The selling price of the product",
+      "examples": ["$46.95", "₹293", "₹66"],
+      "category": "core"
+    },
+
+    "HAS_COLOR": {
+      "description": "Primary color of the product",
+      "examples": ["white", "Polished Chrome", "black"],
+      "category": "core"
+    },
+
+    "HAS_COLOR_FAMILY": {
+      "description": "Color family or color combination for multi-colored products",
+      "examples": ["Black with Burgundy accents", "Burnt Orange with Charcoal Grey"],
+      "category": "core"
+    },
+
+    "HAS_MATERIAL": {
+      "description": "Primary material the product is made from",
+      "examples": ["Brass", "Poly crepe", "Chiffon satin"],
+      "category": "core"
+    },
+
+    "HAS_WEIGHT": {
+      "description": "Weight of the product",
+      "examples": ["91 g", "222 g", "0.616 kg"],
+      "category": "core"
+    },
+
+    "HAS_DIMENSIONS": {
+      "description": "Physical dimensions (Length × Width × Height)",
+      "examples": ["4.7 × 4.5 × 1.4 cm", "15.7 × 3.1 × 9.3 cm"],
+      "category": "core"
+    },
+
+    "HAS_COUNTRY_OF_ORIGIN": {
+      "description": "Country where the product was manufactured",
+      "examples": ["India", "USA"],
+      "category": "core"
+    },
+
+    "HAS_GENERIC_NAME": {
+      "description": "Generic product category name",
+      "examples": ["Watches", "Wallets", "Sports Shoes", "Saree"],
+      "category": "core"
+    },
+
+    "HAS_SKU": {
+      "description": "Stock Keeping Unit identifier",
+      "examples": ["9556F52D63F9", "7FEB192D6686"],
+      "category": "core"
+    },
+
+    "HAS_PACKAGE_QUANTITY": {
+      "description": "Number of items in the package",
+      "examples": ["1", "2"],
+      "category": "core"
+    },
+
+    "HAS_CARE_INSTRUCTIONS": {
+      "description": "How to clean or maintain the product",
+      "examples": ["Wipe clean with a soft cloth", "Dry clean recommended"],
+      "category": "core"
+    },
+
+    "_comment_fashion": "=== FASHION & CLOTHING SPECIFIC ===",
+
+    "HAS_CLOSURE_TYPE": {
+      "description": "Type of closure mechanism",
+      "examples": ["Zipper", "Button", "Velcro", "Hook and Eye"],
+      "category": "fashion"
+    },
+
+    "HAS_OCCASION_TYPE": {
+      "description": "Suitable occasions for wearing the product",
+      "examples": ["Casual", "Sports", "Reception", "Festive", "Semi-formal"],
+      "category": "fashion"
+    },
+
+    "HAS_MATERIAL_TYPE": {
+      "description": "Specific material composition",
+      "examples": ["high-quality materials", "gold", "Brass"],
+      "category": "fashion"
+    },
+
+    "HAS_MATERIAL_COMPOSITION": {
+      "description": "Detailed material composition for textiles",
+      "examples": ["Poly crepe", "Chiffon satin", "100% Cotton"],
+      "category": "fashion"
+    },
+
+    "HAS_WEAVE_TYPE": {
+      "description": "Type of weaving technique used",
+      "examples": ["Power-loom", "Fine weave", "Handloom"],
+      "category": "fashion"
+    },
+
+    "HAS_PATTERN": {
+      "description": "Design pattern on the product",
+      "examples": ["Solid body with accent border", "Floral", "Striped"],
+      "category": "fashion"
+    },
+
+    "HAS_BORDER": {
+      "description": "Border design (for sarees, scarves)",
+      "examples": ["Delicate woven border with metallic accent"],
+      "category": "fashion"
+    },
+
+    "HAS_PALLU": {
+      "description": "Pallu design for sarees",
+      "examples": ["Tonal pallu with subtle motifs"],
+      "category": "fashion"
+    },
+
+    "HAS_BLOUSE_PIECE": {
+      "description": "Whether blouse piece is included and its state",
+      "examples": ["Unstitched, included (0.8 meters)"],
+      "category": "fashion"
+    },
+
+    "HAS_FABRIC_WEIGHT": {
+      "description": "Weight category of fabric",
+      "examples": ["Lightweight to medium", "Heavy"],
+      "category": "fashion"
+    },
+
+    "HAS_TEXTURE": {
+      "description": "Texture and feel of the fabric",
+      "examples": ["Smooth, lustrous hand-feel", "Rough", "Soft"],
+      "category": "fashion"
+    },
+
+    "HAS_LENGTH": {
+      "description": "Length measurement (for sarees, dresses)",
+      "examples": ["6.2 - 6.4 meters", "Knee-length"],
+      "category": "fashion"
+    },
+
+    "HAS_GENDER": {
+      "description": "Target gender for the product",
+      "examples": ["Women", "Men", "Unisex"],
+      "category": "fashion"
+    },
+
+    "HAS_SEASONALITY": {
+      "description": "Which season(s) the product is suitable for",
+      "examples": ["Year-round", "Summer", "Winter"],
+      "category": "fashion"
+    },
+
+    "HAS_SIZE": {
+      "description": "Size of the clothing item",
+      "examples": ["S", "M", "L", "XL", "32", "10"],
+      "category": "fashion"
+    },
+
+    "HAS_FIT": {
+      "description": "Fit style of the garment",
+      "examples": ["Slim", "Regular", "Loose", "Tailored"],
+      "category": "fashion"
+    },
+
+    "_comment_furniture": "=== FURNITURE & HOME DECOR ===",
+
+    "HAS_FINISH": {
+      "description": "Surface finish or coating",
+      "examples": ["Polished Chrome", "Matte", "Brushed Nickel"],
+      "category": "furniture"
+    },
+
+    "HAS_ASSEMBLY_REQUIRED": {
+      "description": "Whether assembly is needed",
+      "examples": ["Yes", "No", "Minimal"],
+      "category": "furniture"
+    },
+
+    "HAS_CAPACITY": {
+      "description": "Capacity or load bearing ability",
+      "examples": ["Accommodates up to two towels", "50 kg"],
+      "category": "furniture"
+    },
+
+    "HAS_DURABILITY": {
+      "description": "Durability characteristics",
+      "examples": ["Lasting durability", "Corrosion resistant"],
+      "category": "furniture"
+    },
+
+    "HAS_STYLE": {
+      "description": "Design style or aesthetic",
+      "examples": ["Modern", "Contemporary", "Classic", "Rustic"],
+      "category": "furniture"
+    },
+
+    "HAS_ROOM_TYPE": {
+      "description": "Which room the furniture is intended for",
+      "examples": ["Bathroom", "Bedroom", "Living Room", "Kitchen"],
+      "category": "furniture"
+    },
+
+    "_comment_food": "=== GROCERIES & FOOD PRODUCTS ===",
+
+    "HAS_DIET_TYPE": {
+      "description": "Dietary classification",
+      "examples": ["Vegetarian", "Vegan", "Non-Vegetarian", "Gluten-Free"],
+      "category": "food"
+    },
+
+    "HAS_NET_QUANTITY": {
+      "description": "Net quantity/volume of the food product",
+      "examples": ["616 g", "709 g", "1 L"],
+      "category": "food"
+    },
+
+    "HAS_INGREDIENTS": {
+      "description": "List of ingredients",
+      "examples": ["Wheat, Oats, Almonds, Honey"],
+      "category": "food"
+    },
+
+    "HAS_NUTRITION": {
+      "description": "Nutritional information",
+      "examples": ["High-fiber", "Source of essential vitamins and minerals"],
+      "category": "food"
+    },
+
+    "HAS_ALLERGENS": {
+      "description": "Allergen warnings",
+      "examples": ["Contains nuts", "May contain gluten"],
+      "category": "food"
+    },
+
+    "HAS_STORAGE_INSTRUCTIONS": {
+      "description": "How to store the product",
+      "examples": ["Store in a cool, dry place away from direct sunlight"],
+      "category": "food"
+    },
+
+    "HAS_EXPIRY_DATE": {
+      "description": "Expiration or best before date",
+      "examples": ["2024-12-31"],
+      "category": "food"
+    },
+
+    "HAS_SERVING_SIZE": {
+      "description": "Recommended serving size",
+      "examples": ["30g", "1 cup"],
+      "category": "food"
+    },
+
+    "_comment_electronics": "=== ELECTRONICS & TECH (Inferred from domain knowledge) ===",
+
+    "HAS_REFRESH_RATE": {
+      "description": "Display refresh rate in Hz",
+      "examples": ["60Hz", "120Hz", "165Hz"],
+      "category": "electronics"
+    },
+
+    "HAS_RESOLUTION": {
+      "description": "Display resolution",
+      "examples": ["1920x1080", "4K", "2560x1440"],
+      "category": "electronics"
+    },
+
+    "HAS_STORAGE": {
+      "description": "Storage capacity",
+      "examples": ["256GB", "512GB", "1TB"],
+      "category": "electronics"
+    },
+
+    "HAS_RAM": {
+      "description": "Memory capacity",
+      "examples": ["8GB", "16GB", "32GB"],
+      "category": "electronics"
+    },
+
+    "HAS_PROCESSOR": {
+      "description": "CPU/processor model",
+      "examples": ["Intel i7", "Snapdragon 8 Gen 2", "M3 Pro"],
+      "category": "electronics"
+    },
+
+    "HAS_BATTERY_LIFE": {
+      "description": "Battery duration",
+      "examples": ["10 hours", "5000mAh"],
+      "category": "electronics"
+    },
+
+    "HAS_SCREEN_SIZE": {
+      "description": "Display screen size",
+      "examples": ["6.8 inches", "15.6 inches", "27 inches"],
+      "category": "electronics"
+    },
+
+    "HAS_CONNECTIVITY": {
+      "description": "Connectivity options",
+      "examples": ["WiFi 6", "Bluetooth 5.0", "USB-C"],
+      "category": "electronics"
+    },
+
+    "HAS_OPERATING_SYSTEM": {
+      "description": "Operating system",
+      "examples": ["Windows 11", "Android 14", "iOS 17"],
+      "category": "electronics"
+    },
+
+    "HAS_WARRANTY": {
+      "description": "Warranty period and coverage",
+      "examples": ["1 year manufacturer warranty", "2 years"],
+      "category": "electronics"
+    },
+
+    "_comment_relations": "=== PRODUCT RELATIONSHIPS ===",
+
+    "COMPATIBLE_WITH": {
+      "description": "Other products this is compatible with",
+      "examples": ["iPhone 15", "Samsung Galaxy S24"],
+      "category": "relationship"
+    },
+
+    "INCLUDES": {
+      "description": "Items included in the package",
+      "examples": ["1 Charger", "User Manual", "Warranty Card"],
+      "category": "relationship"
+    },
+
+    "AVAILABLE_IN": {
+      "description": "Available color/size variants",
+      "examples": ["Red, Blue, Green", "S, M, L"],
+      "category": "relationship"
+    },
+
+    "RECOMMENDED_FOR": {
+      "description": "Recommended use cases or users",
+      "examples": ["Gaming", "Office Work", "Outdoor Activities"],
+      "category": "relationship"
+    },
+
+    "MANUFACTURED_BY": {
+      "description": "Manufacturing company (distinct from brand)",
+      "examples": ["Foxconn", "Samsung Electronics"],
+      "category": "relationship"
+    },
+
+    "SOLD_BY": {
+      "description": "Seller or retailer",
+      "examples": ["Amazon", "BigMart Local"],
+      "category": "relationship"
+    },
+
+    "_comment_attributes": "=== PHYSICAL ATTRIBUTES ===",
+
+    "HAS_WIDTH": {
+      "description": "Width dimension",
+      "examples": ["15 cm", "6 inches"],
+      "category": "physical"
+    },
+
+    "HAS_HEIGHT": {
+      "description": "Height dimension",
+      "examples": ["20 cm", "8 inches"],
+      "category": "physical"
+    },
+
+    "HAS_DEPTH": {
+      "description": "Depth dimension",
+      "examples": ["10 cm", "4 inches"],
+      "category": "physical"
+    },
+
+    "HAS_THICKNESS": {
+      "description": "Thickness measurement",
+      "examples": ["0.5 cm", "8mm"],
+      "category": "physical"
+    },
+
+    "HAS_VOLUME": {
+      "description": "Volume capacity",
+      "examples": ["500 ml", "2 liters"],
+      "category": "physical"
+    },
+
+    "_comment_features": "=== PRODUCT FEATURES ===",
+
+    "HAS_FEATURE": {
+      "description": "General product feature or capability",
+      "examples": ["Water resistant", "Dishwasher safe"],
+      "category": "feature"
+    },
+
+    "SUPPORTS": {
+      "description": "Supported features or standards",
+      "examples": ["5G", "Fast charging", "HDR"],
+      "category": "feature"
+    },
+
+    "HAS_CERTIFICATION": {
+      "description": "Certifications or standards compliance",
+      "examples": ["ISO 9001", "CE Certified", "BIS Approved"],
+      "category": "feature"
+    },
+
+    "_comment_commerce": "=== COMMERCE & CATALOG ===",
+
+    "HAS_CATEGORY": {
+      "description": "Product category",
+      "examples": ["Electronics", "Fashion", "Home & Kitchen"],
+      "category": "catalog"
+    },
+
+    "HAS_SUBCATEGORY": {
+      "description": "Product subcategory",
+      "examples": ["Smartphones", "Sarees", "Furniture"],
+      "category": "catalog"
+    },
+
+    "HAS_MODEL_NUMBER": {
+      "description": "Manufacturer's model number",
+      "examples": ["BA2714C", "0202/PC"],
+      "category": "catalog"
+    },
+
+    "HAS_BARCODE": {
+      "description": "Product barcode/UPC",
+      "examples": ["123456789012"],
+      "category": "catalog"
+    },
+
+    "HAS_HSN_CODE": {
+      "description": "Harmonized System Nomenclature code for taxation",
+      "examples": ["6109", "8471"],
+      "category": "catalog"
+    },
+
+    "HAS_STOCK_STATUS": {
+      "description": "Availability status",
+      "examples": ["In Stock", "Out of Stock", "Limited Stock"],
+      "category": "catalog"
+    },
+
+    "HAS_DISCOUNT": {
+      "description": "Discount percentage or amount",
+      "examples": ["20% off", "Save ₹500"],
+      "category": "catalog"
+    },
+
+    "HAS_RATING": {
+      "description": "Customer rating",
+      "examples": ["4.5 stars", "9/10"],
+      "category": "catalog"
+    },
+
+    "HAS_REVIEW_COUNT": {
+      "description": "Number of customer reviews",
+      "examples": ["250 reviews", "1,024"],
+      "category": "catalog"
+    },
+
+    "HAS_IMAGE": {
+      "description": "Image file path or URL for the product",
+      "examples": ["./images/products/samsung-s24.jpg", "https://example.com/product.jpg"],
+      "category": "core"
+    }
+  }
+}

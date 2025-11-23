@@ -1,0 +1,144 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║        E-COMMERCE KNOWLEDGE GRAPH INGESTION PIPELINE - QUICK START          ║
+╔══════════════════════════════════════════════════════════════════════════════╗
+
+📦 PACKAGE CONTENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✓ Production code files (8 Python scripts)
+✓ Dataset: 462 product JSON files (full_list/)
+✓ Seed relations: 86 pre-defined relations
+✓ Environment configuration template (.env)
+✓ Complete documentation (README.md)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚡ QUICK START (5 STEPS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣  EXTRACT PACKAGE
+   tar -xzf kg_production_package.tar.gz
+   cd kg_production/
+
+2️⃣  INSTALL DEPENDENCIES
+   pip install neo4j chromadb langchain-nvidia-ai-endpoints \
+               langchain-huggingface langchain-chroma \
+               langchain-core python-dotenv pydantic
+
+3️⃣  CONFIGURE API KEY
+   # Edit .env file and add your NVIDIA API key
+   nano .env
+   
+   # Get API key from: https://build.nvidia.com/
+   NVIDIA_API_KEY=your_key_here
+
+4️⃣  START MEMGRAPH
+   # Check if already running:
+   ps aux | grep memgraph
+   
+   # If not running:
+   sudo systemctl start memgraph
+
+5️⃣  RUN PIPELINE
+   # Test with 5 files first:
+   mkdir test_batch
+   ls full_list/*.json | head -5 | xargs -I {} cp {} test_batch/
+   python run_pipeline.py ./test_batch --skip-export
+   
+   # Full dataset (462 files, ~4-8 hours):
+   python run_pipeline.py ./full_list
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 EXPECTED OUTPUT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✓ Memgraph KG:
+  - Product nodes with category labels
+  - Attribute relationships (brand, color, store)
+  - Description-based relationships
+
+✓ Vector Databases:
+  - property_vdb/ (property embeddings for curator)
+  - custom_relations_vdb/ (relation standardization)
+
+✓ Output Files:
+  - output/description_triplets.jsonl (extracted triplets)
+  - kg_deployment_package.zip (deployment ready)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔍 VERIFY RESULTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+python << 'PYTHON_EOF'
+from neo4j import GraphDatabase
+
+driver = GraphDatabase.driver('bolt://localhost:7687')
+with driver.session() as session:
+    # Count nodes
+    result = session.run('MATCH (n) RETURN count(n) as count')
+    print(f"✓ Nodes in graph: {result.single()['count']}")
+    
+    # Count relationships
+    result = session.run('MATCH ()-[r]->() RETURN count(r) as count')
+    print(f"✓ Relationships: {result.single()['count']}")
+    
+    # Sample query
+    result = session.run('''
+        MATCH (p:Electronics)-[:HAS_BRAND]->(b)
+        RETURN p.prod_name as product LIMIT 3
+    ''')
+    print("\n✓ Sample products:")
+    for record in result:
+        print(f"  - {record['product']}")
+
+driver.close()
+PYTHON_EOF
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  IMPORTANT NOTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⏱️  Processing Time:
+   - 10 files: ~10-15 minutes
+   - 462 files: ~4-8 hours (depends on API rate limits)
+
+🚨 Rate Limiting:
+   - NVIDIA free tier has strict limits
+   - Expect "429 Too Many Requests" errors
+   - Pipeline auto-retries failed requests
+   - For production: upgrade to paid API tier
+
+🐛 Dry-Run Mode (test without database writes):
+   export DEBUG_DRY_RUN=true
+   python run_pipeline.py ./test_batch --skip-export
+   unset DEBUG_DRY_RUN
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 FULL DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+See README.md for:
+- Detailed architecture explanation
+- Advanced configuration options
+- Troubleshooting guide
+- Query examples
+- Performance tuning
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 SUPPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Check logs:
+- output/extraction_debug.log (pipeline debug output)
+- sudo journalctl -u memgraph (Memgraph logs)
+
+Common issues:
+- Memgraph not running → sudo systemctl start memgraph
+- API key missing → Edit .env file
+- Rate limits → Upgrade NVIDIA API tier or wait
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
