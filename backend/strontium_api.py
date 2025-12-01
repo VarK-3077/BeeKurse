@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import json
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 # Import local modules
 from search_agent.strontium.strontium_agent import StrontiumAgent
@@ -15,6 +15,7 @@ from search_agent.orchestrator.chat_handler import ChatHandler
 from search_agent.orchestrator.orchestrator import SearchOrchestrator
 from search_agent.database.sql_client import SQLClient
 from config.config import Config
+from backend.vendor_intake_flow import VendorIntakeFlow
 
 # to get image url
 from scripts.database_operations.sql_extract import fetch_products_by_ids
@@ -47,6 +48,9 @@ chat_handler = ChatHandler()
 # SQL Client for product details
 sql_client = SQLClient(db_path=config.SQL_DB_PATH)
 
+# Vendor intake flow
+vendor_flow = VendorIntakeFlow(sql_client=sql_client)
+
 print("✅ Strontium Backend initialized successfully!")
 
 
@@ -54,6 +58,14 @@ class MessagePayload(BaseModel):
     """WhatsApp message payload from whatsapp_bot.py"""
     sender: str   # WhatsApp phone number (used as user_id)
     message: str  # User's text message
+
+
+class VendorMessage(BaseModel):
+    """Vendor intake payload (add/update inventory)."""
+
+    sender: str
+    message: str
+    attachments: Optional[List[Dict[str, Any]]] = None
 
 
 # ---------------------------------- Image Add ---------------------------------------------------
@@ -298,6 +310,39 @@ def process_message(payload: MessagePayload):
                 "😕 Oops! Something went wrong on my end. "
                 "Please try again or contact support if the problem persists."
             )
+        }
+
+
+@app.post("/vendor/process")
+def process_vendor_message(payload: VendorMessage):
+    """Handle vendor-facing add/update flows (Nunchi)."""
+
+    try:
+        user_phone = payload.sender
+        user_message = payload.message
+        attachments = payload.attachments or []
+
+        print(f"\n📦 Vendor intake from [{user_phone}]: {user_message}")
+
+        reply = vendor_flow.handle(user_phone, user_message, attachments=attachments)
+
+        return reply
+
+    except Exception as e:
+        print(f"❌ Error in vendor intake: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return {
+            "messages": [
+                {
+                    "type": "text",
+                    "text": (
+                        "We hit a snag while processing your inventory message. "
+                        "Please try again in a moment."
+                    ),
+                }
+            ]
         }
 
 
