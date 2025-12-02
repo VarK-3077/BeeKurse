@@ -300,10 +300,9 @@ class LLMParser:
         """
         if use_nvidia and NVIDIA_AVAILABLE:
             # Initialize NVIDIA client
-            api_key = nvidia_api_key or os.getenv(
-                "NVIDIA_API_KEY",
-                "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"
-            )
+            api_key = nvidia_api_key or os.getenv("NVIDIA_API_KEY")
+            if not api_key:
+                raise ValueError("NVIDIA_API_KEY environment variable is required when use_nvidia=True")
             self.llm_client = ChatNVIDIA(
                 model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
                 api_key=api_key,

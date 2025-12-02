@@ -24,7 +24,9 @@ from sql_injector import add_subcategory_embedding_and_save
 
 
 # Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable is required")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JSON_SERVER_URL = os.getenv("JSON_SERVER_URL", "http://localhost:3001")
