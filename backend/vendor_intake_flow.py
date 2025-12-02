@@ -41,7 +41,7 @@ VENDOR_PRODUCT_PARSER_PROMPT = """You are a product information extraction tool 
 Your task: Extract product data from natural language and fit it into the JSON structure below.
 
 ====================================================================
-⚠️ IMPORTANT: INPUT MAY CONTAIN MULTIPLE PRODUCTS OR VARIATIONS ⚠️
+IMPORTANT: INPUT MAY CONTAIN MULTIPLE PRODUCTS OR VARIATIONS
 ====================================================================
 - The vendor may describe MULTIPLE PRODUCTS in one message
 - Or MULTIPLE VARIATIONS of the same product (different colors, sizes, prices)
@@ -72,7 +72,7 @@ Your task: Extract product data from natural language and fit it into the JSON s
 }
 
 ====================================================================
-⚠️⚠️⚠️ ESSENTIAL FIELDS - MUST EXTRACT FOR EACH PRODUCT ⚠️⚠️⚠️
+=== ESSENTIAL FIELDS - MUST EXTRACT FOR EACH PRODUCT ===
 ====================================================================
 These 5 fields are CRITICAL. If ANY is NOT found, set to null (we will ask vendor):
 
@@ -83,13 +83,13 @@ These 5 fields are CRITICAL. If ANY is NOT found, set to null (we will ask vendo
 5. stock        - Stock count FOR THIS VARIANT (REQUIRED - set null if missing)
 
 ====================================================================
-⚠️⚠️⚠️ DESCRIPTION FIELD - ALWAYS GENERATE ⚠️⚠️⚠️
+=== DESCRIPTION FIELD - ALWAYS GENERATE ===
 ====================================================================
 ALWAYS create a "description" by summarizing the product from the vendor's message.
 Include: key features, materials, special attributes mentioned.
 
 ====================================================================
-⚠️⚠️⚠️ OPTIONAL FIELDS - DO NOT FILL IF NOT MENTIONED ⚠️⚠️⚠️
+=== OPTIONAL FIELDS - DO NOT FILL IF NOT MENTIONED ===
 ====================================================================
 DO NOT guess. DO NOT make up data. DO NOT include field if not mentioned:
 - brand, colour, size, dimensions, category, subcategory, rating, other_properties
@@ -272,6 +272,9 @@ RULES:
 4. Essential fields (prod_name, price, quantity, quantityunit, stock): set to null if NOT found
 5. Optional fields: DO NOT include if not explicitly mentioned
 6. Multiple variations (color/size/price) = SEPARATE product entries
+
+====================================================================
+NEVER USE EMOJIS IN YOUR OUTPUT. DO NOT INCLUDE ANY EMOJIS.
 ====================================================================
 Output JSON:"""
 
@@ -298,9 +301,9 @@ class VendorProductLLMParser:
                         temperature=0.1,  # Low temperature for consistent extraction
                         max_tokens=2048,
                     )
-                    print("✅ VendorProductLLMParser initialized with NVIDIA LLM")
+                    print("VendorProductLLMParser initialized with NVIDIA LLM")
                 except Exception as e:
-                    print(f"⚠️ Failed to initialize NVIDIA LLM: {e}")
+                    print(f"Failed to initialize NVIDIA LLM: {e}")
                     VendorProductLLMParser._llm_client = None
 
     def parse(self, text: str) -> Optional[List[Dict[str, Any]]]:
@@ -356,18 +359,18 @@ class VendorProductLLMParser:
                 normalized = self._normalize_product(product)
                 if normalized.get("name"):  # Only add if we got a valid name
                     normalized_products.append(normalized)
-                    print(f"🤖 LLM parsed: {normalized.get('name')} - ₹{normalized.get('price')}")
+                    print(f"LLM parsed: {normalized.get('name')} - Rs.{normalized.get('price')}")
 
             if normalized_products:
-                print(f"📦 Total products parsed: {len(normalized_products)}")
+                print(f"Total products parsed: {len(normalized_products)}")
                 return normalized_products
             return None
 
         except json.JSONDecodeError as e:
-            print(f"⚠️ LLM JSON parse error: {e}")
+            print(f"LLM JSON parse error: {e}")
             return None
         except Exception as e:
-            print(f"⚠️ LLM parsing error: {e}")
+            print(f"LLM parsing error: {e}")
             return None
 
     def _normalize_product(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
@@ -651,7 +654,7 @@ def _format_preview(payload: Dict[str, Any], missing_fields: List[str] = None) -
     Returns:
         Formatted preview string
     """
-    lines = ["📦 *Product Preview:*", "━━━━━━━━━━━━━━━━━━━━━━"]
+    lines = ["*Product Preview:*", "━━━━━━━━━━━━━━━━━━━━━━"]
 
     # Required fields
     name = payload.get("name", "—")
@@ -686,7 +689,7 @@ def _format_preview(payload: Dict[str, Any], missing_fields: List[str] = None) -
         else:
             lines.append(f"*Dimensions:* {dims}")
     if payload.get("rating"):
-        lines.append(f"*Rating:* {'⭐' * int(payload['rating'])} ({payload['rating']})")
+        lines.append(f"*Rating:* {payload['rating']}/5")
     if payload.get("description"):
         desc = payload['description'][:100] + "..." if len(payload['description']) > 100 else payload['description']
         lines.append(f"*Description:* {desc}")
@@ -699,14 +702,14 @@ def _format_preview(payload: Dict[str, Any], missing_fields: List[str] = None) -
     # Show if parsed by LLM
     if payload.get("parsed_by_llm"):
         lines.append("")
-        lines.append("🤖 _Extracted using AI_")
+        lines.append("_Extracted using AI_")
 
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
 
     # Show missing fields if any
     if missing_fields:
         lines.append("")
-        lines.append(f"⚠️ *Missing required fields:* {', '.join(missing_fields)}")
+        lines.append(f"*Missing required fields:* {', '.join(missing_fields)}")
         lines.append("Please provide the missing information.")
     else:
         lines.append("")
@@ -869,6 +872,18 @@ def _parse_natural_language_input(text: str, mode: Optional[str]) -> Dict[str, A
                 consumed.add(i)
                 consumed.add(i+1)
                 continue
+
+        # Check for "100 in stock" pattern (number + "in" + stock keyword)
+        if token_lower == "in" and i > 0 and i + 1 < len(tokens):
+            prev_token = tokens[i-1].replace(',', '')
+            next_token_lower = tokens[i+1].lower()
+            if re.match(r'^\d+$', prev_token) and next_token_lower in STOCK_KEYWORDS:
+                if i-1 not in consumed and i+1 not in consumed:
+                    result["stock"] = int(prev_token)
+                    consumed.add(i-1)
+                    consumed.add(i)
+                    consumed.add(i+1)
+                    continue
 
     # --- Extract explicit quantity keywords (e.g., "quantity 5", "qty 3") ---
     for i, token in enumerate(tokens):
@@ -1164,13 +1179,13 @@ def _initialize_ocr(debug: bool = False):
 
     try:
         from ocr import OLMOCRProcessor, ReasoningModelProcessor, Config as OCRConfig
-        print("🔄 Initializing OCR models (this may take a moment)...")
+        print("Initializing OCR models (this may take a moment)...")
         OLMOCRProcessor.initialize(model_name=OCRConfig.OCR_MODEL, debug=debug)
         ReasoningModelProcessor.initialize(model_name=OCRConfig.REASONING_MODEL, debug=debug)
         _ocr_initialized = True
-        print("✅ OCR models initialized successfully")
+        print("OCR models initialized successfully")
     except Exception as e:
-        print(f"⚠️ Failed to initialize OCR models: {e}")
+        print(f"Failed to initialize OCR models: {e}")
         raise
 
 
@@ -1194,11 +1209,11 @@ def _process_image_with_ocr(image_path: str, debug: bool = False) -> Dict[str, A
         with open(output_path, "r", encoding="utf-8") as f:
             product_data = json.load(f)
 
-        print(f"📝 OCR extracted product data: {product_data.get('prod_name', 'Unknown')}")
+        print(f"OCR extracted product data: {product_data.get('prod_name', 'Unknown')}")
         return product_data
 
     except Exception as e:
-        print(f"❌ OCR processing failed: {e}")
+        print(f"OCR processing failed: {e}")
         return {}
 
 
@@ -1865,8 +1880,8 @@ class InventoryIntake:
             payload.get("description"),
             dimensions_val,
             payload.get("price"),
-            payload.get("quantity"),
-            payload.get("quantityunit", "unit"),  # Default to "unit"
+            payload.get("quantity") or 1,  # Default to 1
+            payload.get("quantityunit") or "unit",  # Default to "unit"
             payload.get("stock"),
             payload.get("size"),
             payload.get("imageid"),
@@ -1948,7 +1963,7 @@ class InventoryIntake:
             "stock": new_stock,
         }
 
-        print(f"✅ Updated product: {old_values['name']} | Stock: {old_values['stock']} → {new_stock}")
+        print(f"Updated product: {old_values['name']} | Stock: {old_values['stock']} -> {new_stock}")
         return {"old": old_values, "new": new_values}
 
     def enqueue_intake(self, user_id: str, mode: str, payload: Dict[str, Any], matched_product_id: Optional[str] = None) -> Optional[str]:
@@ -1997,7 +2012,7 @@ class VendorIntakeFlow:
         # Use vendor test database if configured
         if sql_client is None:
             if config.USE_VENDOR_TEST_DB:
-                print(f"🧪 Using VENDOR TEST database: {config.VENDOR_TEST_DB_PATH}")
+                print(f"Using VENDOR TEST database: {config.VENDOR_TEST_DB_PATH}")
                 self.sql_client = SQLClient(db_path=config.VENDOR_TEST_DB_PATH)
             else:
                 self.sql_client = SQLClient()
@@ -2080,6 +2095,25 @@ class VendorIntakeFlow:
                 ]
             }
 
+        # ===== Global Exit/Cancel/Reset Commands =====
+        # These work in any state to reset the session
+        if lower in {"exit", "cancel", "abort", "reset", "stop", "quit", "start over", "nevermind", "nvm"}:
+            session.reset()
+            return {
+                "messages": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Session reset.\n\n"
+                            "What would you like to do?\n"
+                            "- Type 'add' to add new products\n"
+                            "- Type 'update' to update existing products\n"
+                            "- Type 'inventory' to view your products"
+                        ),
+                    }
+                ]
+            }
+
         # If lock expired, force re-selection unless user is in the middle of a prompt
         if session.locked_until and _now() > session.locked_until:
             # Check if we're in a pending confirmation state with a snapshot
@@ -2139,20 +2173,23 @@ class VendorIntakeFlow:
         if bulk_result:
             return bulk_result
 
-        # Check for change commands like "change maggi price to 15"
-        change_result = self._handle_change_command(user_id, message)
-        if change_result:
-            return change_result
+        # Skip query/change/remove handlers when attachments are present
+        # Attachments indicate user is adding/updating a product with an image
+        if not attachments:
+            # Check for change commands like "change maggi price to 15"
+            change_result = self._handle_change_command(user_id, message)
+            if change_result:
+                return change_result
 
-        # Check for remove commands like "remove 4JTH" or "delete ABCD"
-        remove_result = self._handle_remove_command(user_id, message)
-        if remove_result:
-            return remove_result
+            # Check for remove commands like "remove 4JTH" or "delete ABCD"
+            remove_result = self._handle_remove_command(user_id, message)
+            if remove_result:
+                return remove_result
 
-        # Check for query patterns like "what is stock of maggi", "inventory", "list"
-        query_result = self._handle_query(user_id, message)
-        if query_result:
-            return query_result
+            # Check for query patterns like "what is stock of maggi", "inventory", "list"
+            query_result = self._handle_query(user_id, message)
+            if query_result:
+                return query_result
 
         # Detect explicit mode switches
         detected_mode = self._detect_mode(message)
@@ -2406,7 +2443,7 @@ class VendorIntakeFlow:
             except ValueError:
                 return {
                     "messages": [
-                        {"type": "text", "text": f"❌ '{value}' is not a valid number for {field}."}
+                        {"type": "text", "text": f"'{value}' is not a valid number for {field}."}
                     ]
                 }
 
@@ -2465,7 +2502,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"❌ Product \"{product_ref}\" not found in your inventory.\n\n"
+                            f"Product \"{product_ref}\" not found in your inventory.\n\n"
                             f"Use 'inventory' to see all your products and their IDs."
                         ),
                     }
@@ -2505,8 +2542,8 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"✅ Updated *{matched_product['name']}* ({matched_product['short_id']}):\n"
-                            f"   {field.capitalize()}: {old_value} → {value}\n\n"
+                            f"Updated *{matched_product['name']}* ({matched_product['short_id']}):\n"
+                            f"   {field.capitalize()}: {old_value} -> {value}\n\n"
                             f"Is this correct? Reply 'yes' to confirm.\n\n"
                             f"If not, tell me the correction:\n"
                             f"• \"{field} is [correct value]\"\n"
@@ -2520,7 +2557,7 @@ class VendorIntakeFlow:
             error_msg = error if error else "Unknown error"
             return {
                 "messages": [
-                    {"type": "text", "text": f"❌ Failed to update {field}: {error_msg}"}
+                    {"type": "text", "text": f"Failed to update {field}: {error_msg}"}
                 ]
             }
 
@@ -2650,11 +2687,11 @@ class VendorIntakeFlow:
             saved_data = temp_storage.load()
             if saved_data and saved_data.get("pending_items"):
                 items = saved_data["pending_items"]
-                lines = ["📋 *Pending Updates:*", "━━━━━━━━━━━━━━━━━━━━━━"]
+                lines = ["*Pending Updates:*", "━━━━━━━━━━━━━━━━━━━━━━"]
                 for idx, item_data in items.items():
                     item = item_data.get("item", {})
                     status = item_data.get("status", "pending")
-                    icon = "✅" if status == "confirmed" else "⏳"
+                    icon = "[OK]" if status == "confirmed" else "[...]"
                     name = item.get("name", "Unknown")
                     price = item.get("price", "—")
                     qty = item.get("quantity", 1)
@@ -2671,7 +2708,7 @@ class VendorIntakeFlow:
                 "messages": [
                     {
                         "type": "text",
-                        "text": "📋 No pending updates.\n\nTo add a product, send:\nadd [name] [price] [qty] [unit] [stock]\n\nExample: add maggi 10 1 pack 50"
+                        "text": "No pending updates.\n\nTo add a product, send:\nadd [name] [price] [qty] [unit] [stock]\n\nExample: add maggi 10 1 pack 50"
                     }
                 ]
             }
@@ -2712,7 +2749,7 @@ class VendorIntakeFlow:
                         {
                             "type": "text",
                             "text": (
-                                "📦 Your inventory is empty.\n\n"
+                                "Your inventory is empty.\n\n"
                                 "To add products, send:\n"
                                 "add [name] [price] [qty] [unit] [stock]\n"
                                 "Example: add Maggi 10 1 pack 50"
@@ -2721,7 +2758,7 @@ class VendorIntakeFlow:
                     ]
                 }
 
-            lines = ["📦 *Your Inventory*", "━━━━━━━━━━━━━━━━━━━━━━"]
+            lines = ["*Your Inventory*", "━━━━━━━━━━━━━━━━━━━━━━"]
 
             for i, p in enumerate(inventory, start=1):
                 lines.append(f"{i}. *{p['name']}* (ID: {p['short_id']})")
@@ -2731,7 +2768,7 @@ class VendorIntakeFlow:
             lines.append("━━━━━━━━━━━━━━━━━━━━━━")
             lines.append(f"Total: {len(inventory)} product(s)")
             lines.append("")
-            lines.append("📝 *Quick Edit:*")
+            lines.append("*Quick Edit:*")
             lines.append("To change any value, reply:")
             lines.append("• \"change [name/ID] price to [value]\"")
             lines.append("• \"change [name/ID] stock to [value]\"")
@@ -2767,7 +2804,7 @@ class VendorIntakeFlow:
         results = self.intake.query_product(product_name, user_id)
 
         if results:
-            lines = [f"📦 Found in your inventory:"]
+            lines = [f"Found in your inventory:"]
             for r in results:
                 lines.append(f"")
                 lines.append(f"• *{r['name']}* (ID: {r['short_id']})")
@@ -2775,7 +2812,7 @@ class VendorIntakeFlow:
                 lines.append(f"  Stock: {r['stock']} units")
 
             lines.append("")
-            lines.append("📝 *Quick Edit:*")
+            lines.append("*Quick Edit:*")
             lines.append("• \"change [name/ID] price to [value]\"")
             lines.append("• \"change [name/ID] stock to [value]\"")
 
@@ -2786,7 +2823,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"❌ No product matching \"{product_name}\" found in your inventory.\n\n"
+                            f"No product matching \"{product_name}\" found in your inventory.\n\n"
                             "To add it, send: add [name] [price] [qty] [unit] [stock]\n"
                             "Example: add Maggi 10 1 pack 50"
                         ),
@@ -2802,20 +2839,20 @@ class VendorIntakeFlow:
                 {
                     "type": "text",
                     "text": (
-                        "👋 Welcome! What would you like to do?\n\n"
+                        "Welcome! What would you like to do?\n\n"
                         "━━━━━━━━━━━━━━━━━━━━━━\n"
-                        "📦 *View Inventory*\n"
+                        "*View Inventory*\n"
                         "   Type: inventory\n\n"
-                        "➕ *Add Product(s)*\n"
+                        "*Add Product(s)*\n"
                         "   add [name] [price] [qty] [unit] [stock]\n"
                         "   Example: add Maggi 10 1 pack 50\n\n"
-                        "📋 *Bulk Add/Update*\n"
+                        "*Bulk Add/Update*\n"
                         "   Send multiple products, one per line:\n"
                         "   bulk add\n"
                         "   Maggi 10 1 50\n"
                         "   Chips 20 1 100\n"
                         "   Biscuits 15 1 75\n\n"
-                        "🔄 *Quick Change*\n"
+                        "*Quick Change*\n"
                         "   change [ID] [field] to [value]\n"
                         "   Example: change JXYK stock to 50\n"
                         "━━━━━━━━━━━━━━━━━━━━━━"
@@ -2856,7 +2893,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            "❌ Couldn't parse any products from your input.\n\n"
+                            "Couldn't parse any products from your input.\n\n"
                             "Please use this format (one product per line):\n"
                             "━━━━━━━━━━━━━━━━━━━━━━\n"
                             "bulk add\n"
@@ -2886,7 +2923,7 @@ class VendorIntakeFlow:
 
         # First message: Summary
         summary_lines = [
-            f"📋 *Bulk {bulk_mode.capitalize()}*: Found {len(bulk_input.items)} product(s)",
+            f"*Bulk {bulk_mode.capitalize()}*: Found {len(bulk_input.items)} product(s)",
             "━━━━━━━━━━━━━━━━━━━━━━",
             "",
             "I'll send each item as a separate message.",
@@ -2917,19 +2954,19 @@ class VendorIntakeFlow:
 
             # Build item message
             missing = item.get_missing_required_fields()
-            status_icon = "⚠️" if missing else "📦"
+            status_icon = "[!]" if missing else ""
 
             item_lines = [
                 f"{status_icon} *Item {item_index}/{len(bulk_input.items)}* ({bulk_mode.upper()})",
                 "━━━━━━━━━━━━━━━━━━━━━━",
-                f"• Name: {item.name or '❓ Missing'}",
-                f"• Price: ₹{item.price if item.price is not None else '❓'} per {item.quantity or 1} unit",
-                f"• Stock: {item.stock if item.stock is not None else '❓'}",
+                f"• Name: {item.name or ' Missing'}",
+                f"• Price: ₹{item.price if item.price is not None else ''} per {item.quantity or 1} unit",
+                f"• Stock: {item.stock if item.stock is not None else ''}",
                 "━━━━━━━━━━━━━━━━━━━━━━",
             ]
 
             if missing:
-                item_lines.append(f"⚠️ Missing: {', '.join(missing)}")
+                item_lines.append(f"Warning: Missing: {', '.join(missing)}")
                 item_lines.append("")
                 item_lines.append("Reply with missing info or full details:")
                 item_lines.append("[name] [price] [qty] [unit] [stock]")
@@ -2974,7 +3011,7 @@ class VendorIntakeFlow:
                 "messages": [
                     {
                         "type": "text",
-                        "text": "🛑 Bulk processing cancelled. No changes were saved.\n\nType 'inventory' to see your products.",
+                        "text": "Bulk processing cancelled. No changes were saved.\n\nType 'inventory' to see your products.",
                     }
                 ]
             }
@@ -3024,7 +3061,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"❓ Which item are you referring to?\n\n"
+                            f" Which item are you referring to?\n\n"
                             f"Status: {confirmed_count} confirmed, {pending_count} pending\n\n"
                             f"Reply with item number:\n"
                             f"• \"1: yes\" to confirm item 1\n"
@@ -3046,7 +3083,7 @@ class VendorIntakeFlow:
                 "messages": [
                     {
                         "type": "text",
-                        "text": f"❌ Item {item_index} not found. Use 'status' to see all items.",
+                        "text": f"Item {item_index} not found. Use 'status' to see all items.",
                     }
                 ]
             }
@@ -3063,7 +3100,7 @@ class VendorIntakeFlow:
                         {
                             "type": "text",
                             "text": (
-                                f"⚠️ Item {item_index} is missing: {', '.join(missing)}\n\n"
+                                f"Warning: Item {item_index} is missing: {', '.join(missing)}\n\n"
                                 f"Please provide the missing values:\n"
                                 f"{item_index}: [name] [price] [qty] [unit] [stock]"
                             ),
@@ -3089,8 +3126,8 @@ class VendorIntakeFlow:
                         {
                             "type": "text",
                             "text": (
-                                f"✅ Item {item_index} confirmed!\n\n"
-                                f"🎉 All {confirmed_count} items confirmed!\n\n"
+                                f"Item {item_index} confirmed!\n\n"
+                                f"All {confirmed_count} items confirmed!\n\n"
                                 f"Reply 'done' to SAVE all changes to database.\n"
                                 f"Reply 'cancel' to discard all changes."
                             ),
@@ -3103,7 +3140,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"✅ Item {item_index} confirmed!\n\n"
+                            f"Item {item_index} confirmed!\n\n"
                             f"Progress: {confirmed_count}/{len(session.bulk_pending_items)} confirmed\n"
                             f"Remaining: {pending_count} item(s)\n\n"
                             f"Continue confirming, or reply 'done' when ready to save."
@@ -3122,7 +3159,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"⏭️ Item {item_index} skipped.\n\n"
+                            f" Item {item_index} skipped.\n\n"
                             f"Remaining: {pending_count} pending item(s)\n"
                             f"Reply 'done' when ready to save confirmed items."
                         ),
@@ -3169,8 +3206,8 @@ class VendorIntakeFlow:
                         {
                             "type": "text",
                             "text": (
-                                f"✏️ Item {item_index} updated!\n\n"
-                                f"📦 *Item {item_index}*:\n"
+                                f"Item {item_index} updated!\n\n"
+                                f"*Item {item_index}*:\n"
                                 f"• Name: {item.name or '?'}\n"
                                 f"• Price: ₹{item.price if item.price else '?'} per {item.quantity or 1} unit\n"
                                 f"• Stock: {item.stock if item.stock is not None else '?'}\n\n"
@@ -3186,7 +3223,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"❓ Couldn't understand correction for item {item_index}.\n\n"
+                            f" Couldn't understand correction for item {item_index}.\n\n"
                             f"Try:\n"
                             f"• \"{item_index}: yes\" to confirm\n"
                             f"• \"{item_index}: skip\" to skip\n"
@@ -3209,7 +3246,7 @@ class VendorIntakeFlow:
     def _show_parallel_bulk_status(self, session: SessionState) -> Dict[str, Any]:
         """Show status of all parallel bulk items."""
         lines = [
-            "📋 *Bulk Processing Status*",
+            "*Bulk Processing Status*",
             "━━━━━━━━━━━━━━━━━━━━━━",
         ]
 
@@ -3218,11 +3255,11 @@ class VendorIntakeFlow:
             status = data["status"]
 
             if status == "confirmed":
-                icon = "✅"
+                icon = "[OK]"
             elif status == "skipped":
-                icon = "⏭️"
+                icon = "[SKIP]"
             else:
-                icon = "⏳"
+                icon = "[...]"
 
             name = item.name or "(no name)"
             price = f"₹{item.price}" if item.price else "?"
@@ -3234,9 +3271,9 @@ class VendorIntakeFlow:
         skipped = len([v for v in session.bulk_pending_items.values() if v["status"] == "skipped"])
         pending = len([v for v in session.bulk_pending_items.values() if v["status"] == "pending"])
 
-        lines.append(f"✅ Confirmed: {confirmed}")
-        lines.append(f"⏭️ Skipped: {skipped}")
-        lines.append(f"⏳ Pending: {pending}")
+        lines.append(f"Confirmed: {confirmed}")
+        lines.append(f" Skipped: {skipped}")
+        lines.append(f" Pending: {pending}")
         lines.append("")
         lines.append("Reply 'done' to save confirmed items.")
 
@@ -3256,7 +3293,7 @@ class VendorIntakeFlow:
                 "messages": [
                     {
                         "type": "text",
-                        "text": "❌ No items were confirmed. Nothing saved.\n\nType 'inventory' to see your products.",
+                        "text": "No items were confirmed. Nothing saved.\n\nType 'inventory' to see your products.",
                     }
                 ]
             }
@@ -3302,7 +3339,7 @@ class VendorIntakeFlow:
         # Build response
         lines = [
             "━━━━━━━━━━━━━━━━━━━━━━",
-            "✅ *Bulk Processing Complete*",
+            "*Bulk Processing Complete*",
             "━━━━━━━━━━━━━━━━━━━━━━",
             f"Saved: {len(successful)}",
             f"Failed: {len(failed)}",
@@ -3340,8 +3377,8 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"🛑 Bulk processing cancelled.\n"
-                            f"✅ {completed_count} item(s) were completed before cancellation.\n\n"
+                            f"Bulk processing cancelled.\n"
+                            f"{completed_count} item(s) were completed before cancellation.\n\n"
                             "Type 'inventory' to see your products."
                         ),
                     }
@@ -3356,7 +3393,7 @@ class VendorIntakeFlow:
                     "messages": [
                         {
                             "type": "text",
-                            "text": f"⏭️ Skipped. Moving to next item...\n\n{self._format_bulk_item_confirmation(session)}",
+                            "text": f" Skipped. Moving to next item...\n\n{self._format_bulk_item_confirmation(session)}",
                         }
                     ]
                 }
@@ -3387,7 +3424,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"📝 Item {session.bulk_current_index + 1}: *{current_item.name or 'Unknown'}*\n\n"
+                            f"Item {session.bulk_current_index + 1}: *{current_item.name or 'Unknown'}*\n\n"
                             f"Still need: {', '.join(missing)}\n\n"
                             f"Please provide: [name] [price] [qty] [unit] [stock]\n"
                             f"Or type 'skip' to skip this item."
@@ -3447,10 +3484,10 @@ class VendorIntakeFlow:
             try:
                 if mode == "update" and matched_id:
                     self.intake.update_product(matched_id, payload)
-                    result_text = f"✅ Updated: {payload['name']}"
+                    result_text = f"Updated: {payload['name']}"
                 else:
                     product_id = self.intake.add_product(session.user_id, payload)
-                    result_text = f"✅ Added: {payload['name']}"
+                    result_text = f"Added: {payload['name']}"
 
                 session.bulk_completed.append({
                     "name": payload["name"],
@@ -3458,7 +3495,7 @@ class VendorIntakeFlow:
                     "success": True,
                 })
             except Exception as e:
-                result_text = f"❌ Failed: {payload['name']} - {str(e)}"
+                result_text = f"Failed: {payload['name']} - {str(e)}"
                 session.bulk_completed.append({
                     "name": payload["name"],
                     "mode": mode,
@@ -3477,7 +3514,7 @@ class VendorIntakeFlow:
                     "messages": [
                         {
                             "type": "text",
-                            "text": f"{result_text}\n\n📋 {remaining} item(s) remaining\n\n{next_prompt}",
+                            "text": f"{result_text}\n\n{remaining} item(s) remaining\n\n{next_prompt}",
                         }
                     ]
                 }
@@ -3507,7 +3544,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"✏️ Updated values!\n\n"
+                            f"Updated values!\n\n"
                             f"{self._format_bulk_item_confirmation(session)}"
                         ),
                     }
@@ -3520,7 +3557,7 @@ class VendorIntakeFlow:
                 {
                     "type": "text",
                     "text": (
-                        f"❓ I didn't understand that.\n\n"
+                        f" I didn't understand that.\n\n"
                         f"{self._format_bulk_item_confirmation(session)}\n\n"
                         f"To correct, use format:\n"
                         f"• \"price is 20\"\n"
@@ -3542,7 +3579,7 @@ class VendorIntakeFlow:
         mode = session.bulk_mode or "add"
 
         lines = [
-            f"📦 *Item {idx}/{total}* ({mode.upper()})",
+            f"*Item {idx}/{total}* ({mode.upper()})",
             "━━━━━━━━━━━━━━━━━━━━━━",
             f"• Name: {current_item.name or '?'}",
             f"• Price: ₹{current_item.price if current_item.price is not None else '?'} per {current_item.quantity or 1} unit",
@@ -3552,7 +3589,7 @@ class VendorIntakeFlow:
 
         missing = current_item.get_missing_required_fields()
         if missing:
-            lines.append(f"⚠️ Missing: {', '.join(missing)}")
+            lines.append(f"Warning: Missing: {', '.join(missing)}")
             lines.append(f"Please provide: {', '.join(missing)}")
         else:
             lines.append("")
@@ -3640,10 +3677,10 @@ class VendorIntakeFlow:
             lines.append("")
 
         lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("📋 *Bulk Processing Complete*")
+        lines.append("*Bulk Processing Complete*")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append(f"✅ Successful: {len(successful)}")
-        lines.append(f"❌ Failed: {len(failed)}")
+        lines.append(f"Successful: {len(successful)}")
+        lines.append(f"Failed: {len(failed)}")
 
         if successful:
             lines.append("")
@@ -3691,7 +3728,7 @@ class VendorIntakeFlow:
             if llm_parser:
                 llm_parsed = llm_parser.parse(text)  # Now returns List[Dict]
                 if llm_parsed:
-                    print(f"✨ LLM parsed {len(llm_parsed)} product(s)")
+                    print(f"LLM parsed {len(llm_parsed)} product(s)")
 
         # If LLM parsed successfully, use its data (now returns list of products)
         if llm_parsed and isinstance(llm_parsed, list) and len(llm_parsed) > 0:
@@ -3736,6 +3773,20 @@ class VendorIntakeFlow:
             if extracted_int is not None:
                 parsed["quantity"] = extracted_int
 
+        # If we're awaiting missing fields and already have a name, don't overwrite it
+        # unless the new input looks like a correction (has price/stock keywords too)
+        existing_name = session.last_payload.get("name")
+        if existing_name and session.awaiting_missing_fields:
+            # Check if the input is just providing missing fields (price, stock, etc.)
+            # rather than a completely new product
+            text_lower = text.lower()
+            has_field_keywords = any(kw in text_lower for kw in ["price", "stock", "rs", "rupee", "₹"])
+            has_only_simple_word = len(text.split()) <= 2 and not has_field_keywords
+
+            # If it's just a simple word like "hi", "exit", etc., keep existing name
+            if has_only_simple_word and parsed["price"] is None and parsed["stock"] is None:
+                parsed["name"] = None  # Will fall back to existing name
+
         payload = {
             "name": parsed["name"] or session.last_payload.get("name"),
             "price": parsed["price"] if parsed["price"] is not None else session.last_payload.get("price"),
@@ -3745,7 +3796,12 @@ class VendorIntakeFlow:
             "attachments": [att.get("type", "image") for att in attachments],
             "raw": text,
             "parsed_pattern": parsed.get("parsed_pattern"),
+            "image_path": session.last_payload.get("image_path") or session.pending_image_path,  # Preserve image from previous message
         }
+
+        # Clear pending image path after it's been used
+        if session.pending_image_path and payload.get("image_path"):
+            session.pending_image_path = None
 
         # Check for missing required fields
         missing = self._check_missing_fields(payload)
@@ -3754,18 +3810,19 @@ class VendorIntakeFlow:
         return [payload], [missing]
 
     def _check_missing_fields(self, payload: Dict[str, Any]) -> List[str]:
-        """Check for missing required fields in a single payload."""
+        """Check for missing required fields in a single payload.
+
+        Only name, price, and stock are truly required.
+        Quantity defaults to 1 and unit defaults to 'unit' if not provided.
+        """
         missing = []
         if not payload.get("name"):
             missing.append("name")
         if payload.get("price") is None:
             missing.append("price")
-        if payload.get("quantity") is None:
-            missing.append("quantity")
-        if not payload.get("quantityunit"):
-            missing.append("quantityunit")
         if payload.get("stock") is None:
             missing.append("stock")
+        # quantity and quantityunit are optional - will default to 1 unit
         return missing
 
     def _handle_missing_fields(
@@ -3814,7 +3871,7 @@ class VendorIntakeFlow:
                 understood = ""
 
             if still_needed:
-                needed_msg = f"\n\n⚠️ *Still need:* {', '.join(still_needed)}."
+                needed_msg = f"\n\nWarning: *Still need:* {', '.join(still_needed)}."
             else:
                 needed_msg = ""
 
@@ -3868,7 +3925,7 @@ class VendorIntakeFlow:
         self, payload: Dict[str, Any], similar: List[Tuple[str, str, float, Optional[float]]], mode: str
     ) -> Dict[str, Any]:
         """Format a confirmation message for inferred/parsed values with similarity suggestions."""
-        lines = ["📝 I understood this:"]
+        lines = ["I understood this:"]
         lines.append(f"• Product: {payload.get('name', 'Unknown')}")
         unit = payload.get('quantityunit', 'unit') or 'unit'
         if payload.get("price") is not None and payload.get("quantity") is not None:
@@ -3895,10 +3952,10 @@ class VendorIntakeFlow:
                 match_score = top_match[2]
                 if match_score >= 0.7:
                     # High similarity - likely the same product
-                    lines.append(f"🔍 Found similar product in inventory:")
+                    lines.append(f"Found similar product in inventory:")
                     price_str = f" @ ₹{match_price}" if match_price else ""
                     lines.append(f"   *{top_match[1]}*{price_str}")
-                    lines.append(f"   📊 Match: {match_score:.0%} (name{' + price' if match_price else ''} similarity)")
+                    lines.append(f"   Match: {match_score:.0%} (name{' + price' if match_price else ''} similarity)")
                     lines.append("")
                     if mode == "add":
                         lines.append("Options:")
@@ -3912,13 +3969,13 @@ class VendorIntakeFlow:
                         lines.append("• Reply 'no' to cancel and re-enter")
                 elif len(relevant_similar) > 0:
                     # Some similarity - show options
-                    lines.append("🔍 Similar products in inventory:")
+                    lines.append("Similar products in inventory:")
                     for idx, item in enumerate(relevant_similar[:3], start=1):
                         item_price = item[3] if len(item) > 3 else None
                         item_score = item[2]
                         price_str = f" @ ₹{item_price}" if item_price else ""
                         lines.append(f"   {idx}. *{item[1]}*{price_str}")
-                        lines.append(f"      📊 Match: {item_score:.0%}")
+                        lines.append(f"      Match: {item_score:.0%}")
                     lines.append("")
                     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
                     lines.append("ℹ️ Similarity = 70% name + 30% price")
@@ -3936,7 +3993,7 @@ class VendorIntakeFlow:
                         lines.append("• Reply 'no' to cancel")
             else:
                 # No similar products found
-                lines.append("✨ This looks like a new product!")
+                lines.append("This looks like a new product!")
                 lines.append("")
                 lines.append("Reply 'yes' to add, or 'no' to re-enter details.")
         else:
@@ -3945,14 +4002,14 @@ class VendorIntakeFlow:
         return {"messages": [{"type": "text", "text": "\n".join(lines)}]}
 
     def _format_similar_prompt(self, matches: List[Tuple[str, str, float, Optional[float]]], addition: bool) -> Dict[str, Any]:
-        intro = "🔍 Found something very similar in your inventory." if addition else "🔍 Is this the item you want to update?"
+        intro = "Found something very similar in your inventory." if addition else "Is this the item you want to update?"
         lines = [intro, ""]
         for idx, item in enumerate(matches, start=1):
             pid, name, score = item[0], item[1], item[2]
             price = item[3] if len(item) > 3 else None
             price_str = f" @ ₹{price}" if price else ""
             lines.append(f"{idx}. *{name}*{price_str}")
-            lines.append(f"   📊 Match: {score:.0%} (based on name similarity{' + price' if price else ''})")
+            lines.append(f"   Match: {score:.0%} (based on name similarity{' + price' if price else ''})")
         lines.append("")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("ℹ️ *How similarity works:*")
@@ -3992,7 +4049,7 @@ class VendorIntakeFlow:
                                 {
                                     "type": "text",
                                     "text": (
-                                        f"⚠️ Found very similar product in inventory:\n"
+                                        f"Warning: Found very similar product in inventory:\n"
                                         f"   \"{top_match[1]}\" (ID: {top_match[0]})\n\n"
                                         f"Did you mean to UPDATE this existing product?\n"
                                         f"• Reply 'yes' to UPDATE the existing product\n"
@@ -4085,7 +4142,7 @@ class VendorIntakeFlow:
                         {
                             "type": "text",
                             "text": (
-                                f"✅ Great! *{product_name}* ({short_id}) is confirmed.\n\n"
+                                f"Great! *{product_name}* ({short_id}) is confirmed.\n\n"
                                 f"What's next?\n"
                                 f"• Type 'inventory' to see all products\n"
                                 f"• change {short_id} [field] to [value]"
@@ -4168,9 +4225,9 @@ class VendorIntakeFlow:
                     }
 
                     lines = [
-                        f"✅ Corrected! Updated: {', '.join(correction_msgs)}",
+                        f"Corrected! Updated: {', '.join(correction_msgs)}",
                         "",
-                        f"📦 Current state of *{new_state.get('name') if new_state else product_name}* ({short_id}):",
+                        f"Current state of *{new_state.get('name') if new_state else product_name}* ({short_id}):",
                         f"   • Price: ₹{new_state.get('price')} per {new_state.get('quantity')} unit",
                         f"   • Stock: {new_state.get('stock')} units",
                         "",
@@ -4190,7 +4247,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"❓ I didn't understand that.\n\n"
+                            f" I didn't understand that.\n\n"
                             f"Current state of *{product_name}* ({short_id}):\n"
                             f"• Price: ₹{current_state.get('price') if current_state else '?'}\n"
                             f"• Stock: {current_state.get('stock') if current_state else '?'}\n\n"
@@ -4217,7 +4274,7 @@ class VendorIntakeFlow:
                         {
                             "type": "text",
                             "text": (
-                                f"✅ Great! \"{product_name}\" is confirmed.\n\n"
+                                f"Great! \"{product_name}\" is confirmed.\n\n"
                                 "Ready for next item! Send in format:\n"
                                 "add/update [name] [price] [qty] [unit] [stock]\n\n"
                                 "Example: add Chips 20 1 pack 100"
@@ -4271,9 +4328,9 @@ class VendorIntakeFlow:
                     }
 
                     lines = [
-                        f"✅ Corrected! Updated: {', '.join(correction_msgs)}",
+                        f"Corrected! Updated: {', '.join(correction_msgs)}",
                         "",
-                        f"📦 New state of \"{new_state.get('name') if new_state else product_name}\":",
+                        f"New state of \"{new_state.get('name') if new_state else product_name}\":",
                         f"   • Price: ₹{new_state.get('price')} per {new_state.get('quantity')} unit",
                         f"   • Stock: {new_state.get('stock')} units",
                         "",
@@ -4293,7 +4350,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            f"❓ I didn't understand that.\n\n"
+                            f" I didn't understand that.\n\n"
                             f"Current state:\n"
                             f"• Price: ₹{current_state.get('price') if current_state else '?'}\n"
                             f"• Stock: {current_state.get('stock') if current_state else '?'}\n\n"
@@ -4422,7 +4479,7 @@ class VendorIntakeFlow:
                         {
                             "type": "text",
                             "text": (
-                                "❌ Cancelled. No products were added.\n\n"
+                                "Cancelled. No products were added.\n\n"
                                 "Ready for next action! Send product details or say 'add' or 'update'."
                             ),
                         }
@@ -4468,7 +4525,7 @@ class VendorIntakeFlow:
                     {
                         "type": "text",
                         "text": (
-                            "❓ I didn't understand that.\n\n"
+                            " I didn't understand that.\n\n"
                             "Reply 'yes' to add all products, or specify corrections like:\n"
                             "• \"Product 1 price is 500\"\n"
                             "• \"Product 2 stock is 100\"\n"
@@ -4554,9 +4611,9 @@ class VendorIntakeFlow:
             }
 
             lines = [
-                f"✅ {'Updated' if matched_product_id else 'Added'} successfully!",
+                f"{'Updated' if matched_product_id else 'Added'} successfully!",
                 "",
-                f"📦 Current state of \"{current_state.get('name')}\":",
+                f"Current state of \"{current_state.get('name')}\":",
                 f"   • Price: ₹{current_state.get('price')} per {current_state.get('quantity')} unit",
                 f"   • Stock: {current_state.get('stock')} units",
                 "",
@@ -4577,7 +4634,7 @@ class VendorIntakeFlow:
         session.locked_until = _now() + self.lock_seconds
         return {
             "messages": [
-                {"type": "text", "text": f"✅ {'Updated' if matched_product_id else 'Added'} successfully!"},
+                {"type": "text", "text": f"{'Updated' if matched_product_id else 'Added'} successfully!"},
                 {"type": "text", "text": "Choose next action: add or update."},
             ]
         }
@@ -4629,7 +4686,7 @@ class VendorIntakeFlow:
         # Summary message first
         messages.append({
             "type": "text",
-            "text": f"📦 *Found {len(payloads)} product(s) to add*\n\nSending each separately for review...",
+            "text": f"*Found {len(payloads)} product(s) to add*\n\nSending each separately for review...",
             "requires_reply_tracking": False
         })
 
@@ -4685,34 +4742,34 @@ class VendorIntakeFlow:
         unit = payload.get("quantityunit", "unit")
         stock = payload.get("stock")
 
-        status_icon = "⚠️" if missing else "📦"
+        status_icon = "[!]" if missing else ""
 
         lines = [
             f"{status_icon} *Product {idx + 1}/{total}*",
             "━━━━━━━━━━━━━━━━━━━━━━",
-            f"📝 *{name}*",
-            f"💰 Price: {'₹' + str(price) if price else '❓ MISSING'} per {qty} {unit}",
-            f"📊 Stock: {stock if stock is not None else '❓ MISSING'}",
+            f"*{name}*",
+            f"Price: {'Rs.' + str(price) if price else 'MISSING'} per {qty} {unit}",
+            f"Stock: {stock if stock is not None else 'MISSING'}",
         ]
 
         # Optional fields
         if payload.get("brand"):
-            lines.append(f"🏷️ Brand: {payload['brand']}")
+            lines.append(f"Brand: {payload['brand']}")
         if payload.get("colour"):
-            lines.append(f"🎨 Colour: {payload['colour']}")
+            lines.append(f"Colour: {payload['colour']}")
         if payload.get("description"):
             desc = payload['description'][:50] + "..." if len(payload['description']) > 50 else payload['description']
-            lines.append(f"📝 {desc}")
+            lines.append(f"{desc}")
 
         # Missing fields warning
         if missing:
-            lines.extend(["", f"⚠️ *Missing:* {', '.join(missing)}"])
+            lines.extend(["", f"Warning: *Missing:* {', '.join(missing)}"])
 
         # Similar products section
         if similar:
             relevant = [s for s in similar if len(s) >= 3 and s[2] >= 0.5][:3]
             if relevant:
-                lines.extend(["", "🔍 *Similar in your inventory:*"])
+                lines.extend(["", "*Similar in your inventory:*"])
                 for i, match in enumerate(relevant, 1):
                     pid, pname, score = match[0], match[1], match[2]
                     pprice = match[3] if len(match) > 3 else None
@@ -4722,7 +4779,7 @@ class VendorIntakeFlow:
                 if relevant[0][2] >= 0.8:
                     lines.extend([
                         "",
-                        "⚠️ *This may be a DUPLICATE!*",
+                        "Warning: *This may be a DUPLICATE!*",
                         "Reply 'update' to update existing,",
                         "or 'add new' to add anyway."
                     ])
@@ -4750,7 +4807,7 @@ class VendorIntakeFlow:
         lower = message.lower().strip()
 
         if product_index >= len(session.multi_product_payloads):
-            return {"messages": [{"type": "text", "text": "❌ Invalid product reference."}]}
+            return {"messages": [{"type": "text", "text": "Invalid product reference."}]}
 
         payload = session.multi_product_payloads[product_index]
         missing = session.multi_product_missing[product_index]
@@ -4763,7 +4820,7 @@ class VendorIntakeFlow:
                 return {
                     "messages": [{
                         "type": "text",
-                        "text": f"⚠️ Product {product_index + 1} ({name}) is missing: {', '.join(missing)}\n\nPlease provide the missing values first."
+                        "text": f"Warning: Product {product_index + 1} ({name}) is missing: {', '.join(missing)}\n\nPlease provide the missing values first."
                     }]
                 }
             session.multi_product_statuses[product_index] = "confirmed"
@@ -4802,13 +4859,13 @@ class VendorIntakeFlow:
                 return {
                     "messages": [{
                         "type": "text",
-                        "text": f"✅ Updated Product {product_index + 1}!\n\nStill missing: {', '.join(new_missing)}"
+                        "text": f"Updated Product {product_index + 1}!\n\nStill missing: {', '.join(new_missing)}"
                     }]
                 }
             return {
                 "messages": [{
                     "type": "text",
-                    "text": f"✅ Updated Product {product_index + 1} ({name})!\n\nReply 'yes' to confirm or provide more corrections."
+                    "text": f"Updated Product {product_index + 1} ({name})!\n\nReply 'yes' to confirm or provide more corrections."
                 }]
             }
 
@@ -4817,7 +4874,7 @@ class VendorIntakeFlow:
             "messages": [{
                 "type": "text",
                 "text": (
-                    f"❓ Didn't understand that for Product {product_index + 1} ({name}).\n\n"
+                    f" Didn't understand that for Product {product_index + 1} ({name}).\n\n"
                     "Reply with:\n"
                     "• 'yes' to confirm\n"
                     "• 'skip' to skip\n"
@@ -4839,7 +4896,7 @@ class VendorIntakeFlow:
         skipped = statuses.count("skipped")
         name = session.multi_product_payloads[idx].get("name") or f"Product {idx + 1}"
 
-        icon = "⏭️" if "skipped" in action else "✅"
+        icon = "" if "skipped" in action else ""
 
         if pending == 0:
             # All processed - prompt to save
@@ -4848,9 +4905,9 @@ class VendorIntakeFlow:
                     "type": "text",
                     "text": (
                         f"{icon} Product {idx + 1} ({name}) {action}!\n\n"
-                        f"🎉 *All products processed!*\n"
-                        f"   ✅ Confirmed: {confirmed}\n"
-                        f"   ⏭️ Skipped: {skipped}\n\n"
+                        f"*All products processed!*\n"
+                        f"   Confirmed: {confirmed}\n"
+                        f"   Skipped: {skipped}\n\n"
                         f"Type 'save' to add confirmed products.\n"
                         f"Type 'cancel' to discard all."
                     )
@@ -4910,17 +4967,17 @@ class VendorIntakeFlow:
         # Build response
         lines = []
         if added:
-            lines.append(f"✅ *Added {len(added)} product(s):*")
+            lines.append(f"*Added {len(added)} product(s):*")
             for p in added:
                 lines.append(f"   • {p['name']}")
 
         if updated:
-            lines.append(f"\n🔄 *Updated {len(updated)} product(s):*")
+            lines.append(f"\n*Updated {len(updated)} product(s):*")
             for p in updated:
                 lines.append(f"   • {p['name']}")
 
         if failed:
-            lines.append(f"\n❌ *Failed {len(failed)} product(s):*")
+            lines.append(f"\n*Failed {len(failed)} product(s):*")
             for p in failed:
                 lines.append(f"   • {p['name']}: {p['error']}")
 
@@ -4949,7 +5006,7 @@ class VendorIntakeFlow:
             if snapshot.get("was_new_product"):
                 # Product was newly added - delete it to rollback
                 cur.execute("DELETE FROM product_table WHERE product_id = ?", (product_id,))
-                print(f"🔄 Rollback: Deleted newly added product {product_id}")
+                print(f"Rollback: Deleted newly added product {product_id}")
             else:
                 # Product existed before - restore original values
                 cur.execute(
@@ -4963,13 +5020,13 @@ class VendorIntakeFlow:
                         product_id,
                     )
                 )
-                print(f"🔄 Rollback: Restored {product_id} to previous state")
+                print(f"Rollback: Restored {product_id} to previous state")
 
             conn.commit()
             session.db_snapshot = None
             return True
         except Exception as e:
-            print(f"❌ Rollback failed: {e}")
+            print(f"Rollback failed: {e}")
             return False
 
     def _parse_correction(self, message: str) -> Dict[str, Any]:
@@ -4983,6 +5040,7 @@ class VendorIntakeFlow:
             r"total\s*stock\s*(?:is)?\s*(\d+)",
             r"only\s*(\d+)\s*(?:stock|units|items)",
             r"(\d+)\s*(?:stock|units|items)\s*(?:only|left|available)",
+            r"(\d+)\s+in\s+stock",  # "100 in stock"
         ]
         for pattern in stock_patterns:
             match = re.search(pattern, lower)

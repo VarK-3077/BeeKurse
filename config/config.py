@@ -172,13 +172,13 @@ class Config:
 
     # Session handling (timeout in seconds for vendor confirmation loops)
     VENDOR_SESSION_LOCK_SECONDS: int = int(
-        os.getenv("VENDOR_SESSION_LOCK_SECONDS", "120")  # 2 minutes default
+        os.getenv("VENDOR_SESSION_LOCK_SECONDS", "300")  # 5 minutes default
     )
     VENDOR_SESSION_LOCK_MAX_SECONDS: int = int(
-        os.getenv("VENDOR_SESSION_LOCK_MAX_SECONDS", "180")  # 3 minutes max
+        os.getenv("VENDOR_SESSION_LOCK_MAX_SECONDS", "600")  # 10 minutes max
     )
     VENDOR_SESSION_LOCK_MIN_SECONDS: int = int(
-        os.getenv("VENDOR_SESSION_LOCK_MIN_SECONDS", "60")  # 1 minute min
+        os.getenv("VENDOR_SESSION_LOCK_MIN_SECONDS", "120")  # 2 minutes min
     )
 
     # Similarity thresholds (higher = stricter matching)
