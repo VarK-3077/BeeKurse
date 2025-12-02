@@ -5,6 +5,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from dotenv import load_dotenv
 
+# User management
+from .user_manager import get_user_manager
+
+# Cart management
+from .cart_manager import get_cart_manager
+
 # Load variables from .env file
 load_dotenv()
 
@@ -216,8 +222,34 @@ async def receive_webhook(request: Request):
             )
             return JSONResponse({"status": "unsupported_type"}, status_code=200)
 
-        user_text = resolve_short_ids_in_text(message["text"]["body"])
-        print(f"📩 Incoming message from {from_number}: {user_text}")
+        # Get raw user text (before short ID resolution)
+        raw_user_text = message["text"]["body"]
+        print(f"📩 Incoming message from {from_number}: {raw_user_text}")
+
+        # ===== User Management Check =====
+        user_manager = get_user_manager()
+        onboarding_response = user_manager.process_message(from_number, raw_user_text)
+
+        if onboarding_response is not None:
+            # User is in onboarding flow - send onboarding message
+            print(f"🆕 Onboarding response to {from_number}")
+            send_whatsapp_text_message(from_number, onboarding_response)
+            return JSONResponse({"status": "onboarding"}, status_code=200)
+        # ===== End User Management Check =====
+
+        # ===== Cart/Wishlist Command Check =====
+        cart_manager = get_cart_manager()
+        cart_response = cart_manager.handle_command(from_number, raw_user_text)
+
+        if cart_response is not None:
+            # Cart/wishlist command handled
+            print(f"🛒 Cart command handled for {from_number}")
+            send_whatsapp_text_message(from_number, cart_response)
+            return JSONResponse({"status": "cart_handled"}, status_code=200)
+        # ===== End Cart/Wishlist Command Check =====
+
+        # Resolve short IDs for search queries
+        user_text = resolve_short_ids_in_text(raw_user_text)
 
         # ===== Call your backend =====
         try:
@@ -274,6 +306,14 @@ async def receive_webhook(request: Request):
                     )
                 elif msg["type"] == "text":
                     send_whatsapp_text_message(from_number, msg["text"])
+
+            # Track last viewed product for "add to cart" command
+            if "product_id" in backend_data:
+                cart_manager.set_last_viewed(
+                    from_number,
+                    backend_data["product_id"],
+                    backend_data.get("short_id")
+                )
 
         # Format 3: Chat response - {"reply": str}
         elif "reply" in backend_data:

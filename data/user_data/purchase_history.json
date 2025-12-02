@@ -1,0 +1,173 @@
+[
+  {
+    "user_id": "user-001",
+    "product_id": "p-001",
+    "subcategory": "shirt",
+    "store": "store-001",
+    "purchase_date": "2024-11-01T10:30:00",
+    "price": 29.99,
+    "rating": 4.5
+  },
+  {
+    "user_id": "user-001",
+    "product_id": "p-002",
+    "subcategory": "shirt",
+    "store": "store-001",
+    "purchase_date": "2024-10-15T14:20:00",
+    "price": 34.99,
+    "rating": 5.0
+  },
+  {
+    "user_id": "user-001",
+    "product_id": "p-003",
+    "subcategory": "shirt",
+    "store": "store-001",
+    "purchase_date": "2024-09-20T09:15:00",
+    "price": 27.50,
+    "rating": 4.0
+  },
+  {
+    "user_id": "user-001",
+    "product_id": "p-004",
+    "subcategory": "shirt",
+    "store": "store-002",
+    "purchase_date": "2024-08-10T16:45:00",
+    "price": 39.99,
+    "rating": 4.5
+  },
+  {
+    "user_id": "user-001",
+    "product_id": "p-010",
+    "subcategory": "jeans",
+    "store": "store-003",
+    "purchase_date": "2024-10-05T11:00:00",
+    "price": 59.99,
+    "rating": 5.0
+  },
+  {
+    "user_id": "user-001",
+    "product_id": "p-011",
+    "subcategory": "jeans",
+    "store": "store-003",
+    "purchase_date": "2024-07-12T13:30:00",
+    "price": 65.00,
+    "rating": 4.5
+  },
+  {
+    "user_id": "user-001",
+    "product_id": "p-015",
+    "subcategory": "sneakers",
+    "store": "store-004",
+    "purchase_date": "2024-06-20T10:00:00",
+    "price": 89.99,
+    "rating": 5.0
+  },
+  {
+    "user_id": "user-002",
+    "product_id": "p-020",
+    "subcategory": "trousers",
+    "store": "store-005",
+    "purchase_date": "2024-10-25T15:00:00",
+    "price": 89.99,
+    "rating": 4.5
+  },
+  {
+    "user_id": "user-002",
+    "product_id": "p-021",
+    "subcategory": "jacket",
+    "store": "store-005",
+    "purchase_date": "2024-09-30T12:00:00",
+    "price": 199.99,
+    "rating": 5.0
+  },
+  {
+    "user_id": "user-002",
+    "product_id": "p-022",
+    "subcategory": "polo shirt",
+    "store": "store-006",
+    "purchase_date": "2024-09-15T14:30:00",
+    "price": 55.00,
+    "rating": 4.0
+  },
+  {
+    "user_id": "user-002",
+    "product_id": "p-023",
+    "subcategory": "polo shirt",
+    "store": "store-006",
+    "purchase_date": "2024-08-20T11:15:00",
+    "price": 60.00,
+    "rating": 4.5
+  },
+  {
+    "user_id": "user-002",
+    "product_id": "p-024",
+    "subcategory": "shoes",
+    "store": "store-007",
+    "purchase_date": "2024-07-10T09:30:00",
+    "price": 149.99,
+    "rating": 5.0
+  },
+  {
+    "user_id": "user-003",
+    "product_id": "p-030",
+    "subcategory": "sneakers",
+    "store": "store-008",
+    "purchase_date": "2024-11-05T10:00:00",
+    "price": 119.99,
+    "rating": 5.0
+  },
+  {
+    "user_id": "user-003",
+    "product_id": "p-031",
+    "subcategory": "sneakers",
+    "store": "store-008",
+    "purchase_date": "2024-09-25T14:00:00",
+    "price": 109.99,
+    "rating": 4.5
+  },
+  {
+    "user_id": "user-003",
+    "product_id": "p-032",
+    "subcategory": "sneakers",
+    "store": "store-008",
+    "purchase_date": "2024-08-15T11:30:00",
+    "price": 99.99,
+    "rating": 4.0
+  },
+  {
+    "user_id": "user-003",
+    "product_id": "p-033",
+    "subcategory": "sneakers",
+    "store": "store-009",
+    "purchase_date": "2024-07-05T16:00:00",
+    "price": 129.99,
+    "rating": 5.0
+  },
+  {
+    "user_id": "user-003",
+    "product_id": "p-035",
+    "subcategory": "t-shirt",
+    "store": "store-010",
+    "purchase_date": "2024-10-10T13:00:00",
+    "price": 25.00,
+    "rating": 4.5
+  },
+  {
+    "user_id": "user-003",
+    "product_id": "p-036",
+    "subcategory": "t-shirt",
+    "store": "store-010",
+    "purchase_date": "2024-08-01T10:30:00",
+    "price": 22.50,
+    "rating": 4.0
+  },
+  {
+    "user_id": "user-003",
+    "product_id": "p-037",
+    "subcategory": "pants",
+    "store": "store-011",
+    "purchase_date": "2024-06-15T15:30:00",
+    "price": 45.00,
+    "rating": 4.5
+  }
+]

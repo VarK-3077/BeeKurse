@@ -7,6 +7,8 @@ from .models import (
     EnrichedSearchQuery,
     DetailQueryOutput,
     ChatQueryOutput,
+    CartActionOutput,
+    CartViewOutput,
     FormattedSearchOutput,
     FormattedDetailOutput,
     FormattedChatOutput,
@@ -20,14 +22,14 @@ class QueryFormatter:
 
     def format(
         self,
-        query: Union[EnrichedSearchQuery, DetailQueryOutput, ChatQueryOutput],
+        query: Union[EnrichedSearchQuery, DetailQueryOutput, ChatQueryOutput, CartActionOutput, CartViewOutput],
         original_query: str = ""
     ) -> StrontiumOutput:
         """
         Format query to final JSON output
 
         Args:
-            query: Enriched search query, detail query, or chat query
+            query: Enriched search query, detail query, chat query, or cart query
             original_query: Original user query text (for search queries)
 
         Returns:
@@ -39,6 +41,9 @@ class QueryFormatter:
             return self._format_detail(query)
         elif isinstance(query, ChatQueryOutput):
             return self._format_chat(query)
+        elif isinstance(query, (CartActionOutput, CartViewOutput)):
+            # Cart queries pass through as-is (no formatting needed)
+            return query
         else:
             raise ValueError(f"Unknown query type: {type(query)}")
 

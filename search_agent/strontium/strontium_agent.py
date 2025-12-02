@@ -90,13 +90,17 @@ class StrontiumAgent:
             cached_parse = self.cache_manager.llm_cache.get(raw_query)
             if cached_parse:
                 # Reconstruct parsed object from cached dict
-                from .models import SearchQueryOutput, DetailQueryOutput, ChatQueryOutput
+                from .models import SearchQueryOutput, DetailQueryOutput, ChatQueryOutput, CartActionOutput, CartViewOutput
                 if cached_parse['query_type'] == 'search':
                     parsed = SearchQueryOutput(**cached_parse)
                 elif cached_parse['query_type'] == 'detail':
                     parsed = DetailQueryOutput(**cached_parse)
-                else:  # chat
+                elif cached_parse['query_type'] == 'chat':
                     parsed = ChatQueryOutput(**cached_parse)
+                elif cached_parse['query_type'] == 'cart_action':
+                    parsed = CartActionOutput(**cached_parse)
+                elif cached_parse['query_type'] == 'cart_view':
+                    parsed = CartViewOutput(**cached_parse)
             else:
                 # Parse and cache
                 parsed = self.llm_parser.parse(raw_query)
@@ -105,8 +109,8 @@ class StrontiumAgent:
             parsed = self.llm_parser.parse(raw_query)
 
         # Step 2: Route based on query type
-        if parsed.query_type == "detail" or parsed.query_type == "chat":
-            # Detail and chat queries skip enrichment
+        if parsed.query_type in ("detail", "chat", "cart_action", "cart_view"):
+            # These queries skip enrichment (no products to enrich)
             return self.formatter.format(parsed)
 
         # Step 3: Enrich with user context (for search queries only)

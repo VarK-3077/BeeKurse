@@ -1,3 +1,9 @@
+# Claude Code
+.claude/
+
+# KURSE submodule
+KURSE/
+
 # Environment variables
 .env
 .env.local

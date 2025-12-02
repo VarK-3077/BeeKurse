@@ -73,8 +73,22 @@ class ChatQueryOutput(BaseModel):
     message: str = Field(..., description="The user's message")
 
 
+class CartActionOutput(BaseModel):
+    """LLM output for cart/wishlist add/remove actions"""
+    query_type: Literal["cart_action"] = "cart_action"
+    action: Literal["add", "remove"] = Field(..., description="Whether to add or remove")
+    target: Literal["cart", "wishlist"] = Field(..., description="Cart or wishlist")
+    product_id: str = Field(..., description="The product ID to add/remove")
+
+
+class CartViewOutput(BaseModel):
+    """LLM output for viewing cart/wishlist"""
+    query_type: Literal["cart_view"] = "cart_view"
+    target: Literal["cart", "wishlist"] = Field(..., description="Cart or wishlist")
+
+
 # Union type for LLM output
-LLMOutput = SearchQueryOutput | DetailQueryOutput | ChatQueryOutput
+LLMOutput = SearchQueryOutput | DetailQueryOutput | ChatQueryOutput | CartActionOutput | CartViewOutput
 
 
 # ============================================================================
@@ -177,8 +191,8 @@ class FormattedChatOutput(BaseModel):
     message: str
 
 
-# Union type for final output
-StrontiumOutput = FormattedSearchOutput | FormattedDetailOutput | FormattedChatOutput
+# Union type for final output (includes cart outputs that pass through as-is)
+StrontiumOutput = FormattedSearchOutput | FormattedDetailOutput | FormattedChatOutput | CartActionOutput | CartViewOutput
 
 
 # ============================================================================

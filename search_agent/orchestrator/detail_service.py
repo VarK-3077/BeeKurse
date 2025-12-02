@@ -115,14 +115,14 @@ class ProductDetailService:
         # Step 4: Query KG for product properties
         kg_properties = self._query_kg_properties(
             product_id,
-            product.basetype,
+            product.subcategory,
             similar_relations
         )
 
         # Step 5: Query Main VDB for semantic product information
         vdb_details = self._query_main_vdb_for_details(
             product.prod_name,
-            product.basetype,
+            product.subcategory,
             properties_to_explain,
             query_keywords
         )
@@ -205,7 +205,7 @@ class ProductDetailService:
     def _query_kg_properties(
         self,
         product_id: str,
-        basetype: str,
+        subcategory: str,
         relation_types: List[str]
     ) -> Dict[str, List[str]]:
         """
@@ -213,7 +213,7 @@ class ProductDetailService:
 
         Args:
             product_id: Product ID
-            basetype: Product basetype
+            subcategory: Product subcategory
             relation_types: Relation types to query
 
         Returns:
@@ -244,7 +244,7 @@ class ProductDetailService:
     def _query_main_vdb_for_details(
         self,
         product_name: str,
-        basetype: str,
+        subcategory: str,
         properties_to_explain: List[str],
         query_keywords: List[str]
     ) -> List[Dict]:
@@ -253,7 +253,7 @@ class ProductDetailService:
 
         Args:
             product_name: Product name from SQL
-            basetype: Product basetype
+            subcategory: Product subcategory
             properties_to_explain: Properties being asked about
             query_keywords: Keywords to search
 
@@ -268,7 +268,7 @@ class ProductDetailService:
                 query = f"{product_name} has {prop}"
                 try:
                     results = self.main_vdb.search_products(
-                        basetype=basetype,
+                        subcategory=subcategory,
                         property_query=query,
                         top_k=3
                     )
@@ -286,7 +286,7 @@ class ProductDetailService:
             query = f"{product_name} {keyword}"
             try:
                 results = self.main_vdb.search_products(
-                    basetype=basetype,
+                    subcategory=subcategory,
                     property_query=query,
                     top_k=3
                 )
@@ -306,7 +306,7 @@ class ProductDetailService:
         info = f"Product ID: {product.product_id}\n"
         if hasattr(product, 'prod_name') and product.prod_name:
             info += f"Name: {product.prod_name}\n"
-        info += f"Category: {product.basetype}\n"
+        info += f"Category: {product.subcategory}\n"
         info += f"Price: ${product.price}\n"
         info += f"Stock: {product.stock} units\n"
         if hasattr(product, 'brand') and product.brand:

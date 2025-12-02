@@ -19,6 +19,9 @@ from config.config import Config
 # to get image url
 from scripts.database_operations.sql_extract import fetch_products_by_ids
 
+# Cart manager for handling cart actions
+from .cart_manager import get_cart_manager
+
 # Use config
 config = Config
 
@@ -169,7 +172,7 @@ def format_detail_response(
             f"{answer}"
         )
 
-        # ⭐ Return multi-message response
+        # ⭐ Return multi-message response with product_id for cart tracking
         return {
             "messages": [
                 {
@@ -180,7 +183,9 @@ def format_detail_response(
                     "type": "text",
                     "text": caption
                 }
-            ]
+            ],
+            "product_id": product_id,
+            "short_id": product.get("short_id")
         }
 
     except Exception as e:
@@ -227,6 +232,86 @@ def health_check():
     }
 
 
+def handle_cart_action(user_id: str, parsed: Dict[str, Any]) -> str:
+    """
+    Handle cart_action query type.
+    Returns formatted response string.
+    """
+    cart_manager = get_cart_manager()
+    action = parsed.get("action")
+    target = parsed.get("target")
+    product_id = parsed.get("product_id")
+
+    # Handle "LAST_VIEWED" placeholder
+    if product_id == "LAST_VIEWED":
+        product_id = cart_manager.get_last_viewed(user_id)
+        if not product_id:
+            return "Please view a product first, then I can add it to your cart."
+
+    if not product_id:
+        return "I couldn't identify which product you're referring to. Please specify a product ID."
+
+    # Fetch product name for response
+    products = fetch_products_by_ids([product_id])
+    product = products.get(product_id, {})
+    name = product.get("prod_name", product_id[:8])
+    if len(name) > 30:
+        name = name[:30] + "..."
+
+    if action == "add" and target == "cart":
+        success, status = cart_manager.add_to_cart(user_id, product_id)
+        if success:
+            if status == "already_exists":
+                return f"ℹ️ *{name}* is already in your cart"
+            return f"✅ Added *{name}* to your cart!\n\n🛒 View cart: {cart_manager.get_cart_url(user_id)}"
+        return "❌ Could not add to cart"
+
+    elif action == "add" and target == "wishlist":
+        success, status = cart_manager.add_to_wishlist(user_id, product_id)
+        if success:
+            if status == "already_exists":
+                return f"ℹ️ *{name}* is already in your wishlist"
+            return f"❤️ Saved *{name}* to your wishlist!\n\n💝 View wishlist: {cart_manager.get_wishlist_url(user_id)}"
+        return "❌ Could not add to wishlist"
+
+    elif action == "remove" and target == "cart":
+        success, _ = cart_manager.remove_from_cart(user_id, product_id)
+        if success:
+            return f"✅ Removed *{name}* from your cart"
+        return f"❌ *{name}* is not in your cart"
+
+    elif action == "remove" and target == "wishlist":
+        success, _ = cart_manager.remove_from_wishlist(user_id, product_id)
+        if success:
+            return f"✅ Removed *{name}* from your wishlist"
+        return f"❌ *{name}* is not in your wishlist"
+
+    return "I couldn't understand that cart action. Try 'add to cart' or 'remove from wishlist'."
+
+
+def handle_cart_view(user_id: str, parsed: Dict[str, Any]) -> str:
+    """
+    Handle cart_view query type.
+    Returns formatted response string.
+    """
+    cart_manager = get_cart_manager()
+    target = parsed.get("target")
+
+    if target == "cart":
+        cart = cart_manager.get_cart(user_id)
+        if not cart:
+            return "🛒 Your cart is empty.\n\nSearch for products to add!"
+        return f"🛒 You have {len(cart)} item(s) in your cart.\n\nView & manage: {cart_manager.get_cart_url(user_id)}"
+
+    elif target == "wishlist":
+        wishlist = cart_manager.get_wishlist(user_id)
+        if not wishlist:
+            return "❤️ Your wishlist is empty.\n\nSave products you love for later!"
+        return f"❤️ You have {len(wishlist)} item(s) in your wishlist.\n\nView & manage: {cart_manager.get_wishlist_url(user_id)}"
+
+    return "Would you like to see your cart or wishlist?"
+
+
 @app.post("/process")
 def process_message(payload: MessagePayload):
     """
@@ -262,17 +347,25 @@ def process_message(payload: MessagePayload):
         # Step 2: Route based on query type
         if query_type == "search":
             print(f"🔎 Executing search...")
-            reply_text = format_search_response(parsed, orchestrator, sql_client)
-            return reply_text
+            response = format_search_response(parsed, orchestrator, sql_client)
+            return response
 
         elif query_type == "detail":
             print(f"📦 Getting product details...")
-            reply_text = format_detail_response(parsed, orchestrator, sql_client)
-            return reply_text
+            response = format_detail_response(parsed, orchestrator, sql_client)
+            return response
 
         elif query_type == "chat":
             print(f"💬 Handling chat...")
             reply_text = format_chat_response(parsed, chat_handler)
+
+        elif query_type == "cart_action":
+            print(f"🛒 Processing cart action...")
+            reply_text = handle_cart_action(user_id, parsed)
+
+        elif query_type == "cart_view":
+            print(f"👀 Viewing cart/wishlist...")
+            reply_text = handle_cart_view(user_id, parsed)
 
         else:
             reply_text = (

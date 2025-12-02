@@ -10,6 +10,8 @@ from .models import (
     SearchQueryOutput,
     DetailQueryOutput,
     ChatQueryOutput,
+    CartActionOutput,
+    CartViewOutput,
     ProductRequest
 )
 
@@ -44,6 +46,8 @@ First, determine the query type:
 - "search": User wants to find new products
 - "detail": User wants more information about specific product(s)
 - "chat": General conversation, greetings, or non-product questions
+- "cart_action": User wants to add or remove items from their cart or wishlist
+- "cart_view": User wants to see their cart or wishlist
 
 === FOR SEARCH QUERIES ===
 Extract a list of products requested. For each product:
@@ -132,6 +136,20 @@ E. query_keywords: Keywords to help find info in product descriptions
 === FOR CHAT QUERIES ===
 A. message: The user's message (greeting, question, etc.)
 
+=== FOR CART_ACTION QUERIES ===
+User wants to add or remove items from their cart or wishlist.
+
+A. action: "add" or "remove"
+B. target: "cart" or "wishlist"
+C. product_id: The product ID to add/remove
+   - Use "LAST_VIEWED" if user says "this", "it", "that" without specifying a product
+   - Look for product IDs in the format "p-xxx" or short IDs like "A1B2"
+
+=== FOR CART_VIEW QUERIES ===
+User wants to see their cart or wishlist contents.
+
+A. target: "cart" or "wishlist"
+
 === EXAMPLES ===
 
 Query: "Red cotton shirt under $30"
@@ -216,10 +234,48 @@ Query: "Hello!"
   "message": "Hello!"
 }
 
-Query: "How are you?"
+Query: "add this to my cart"
 {
-  "query_type": "chat",
-  "message": "How are you?"
+  "query_type": "cart_action",
+  "action": "add",
+  "target": "cart",
+  "product_id": "LAST_VIEWED"
+}
+
+Query: "save it for later"
+{
+  "query_type": "cart_action",
+  "action": "add",
+  "target": "wishlist",
+  "product_id": "LAST_VIEWED"
+}
+
+Query: "remove that from my wishlist"
+{
+  "query_type": "cart_action",
+  "action": "remove",
+  "target": "wishlist",
+  "product_id": "LAST_VIEWED"
+}
+
+Query: "add p-123 to cart"
+{
+  "query_type": "cart_action",
+  "action": "add",
+  "target": "cart",
+  "product_id": "p-123"
+}
+
+Query: "what's in my cart?"
+{
+  "query_type": "cart_view",
+  "target": "cart"
+}
+
+Query: "show me my saved items"
+{
+  "query_type": "cart_view",
+  "target": "wishlist"
 }
 
 Now process: "{query}"
@@ -358,7 +414,7 @@ class LLMParser:
         else:
             raise NotImplementedError("LLM client type not recognized")
 
-    def _validate_and_convert(self, parsed_json: dict) -> Union[SearchQueryOutput, DetailQueryOutput, ChatQueryOutput]:
+    def _validate_and_convert(self, parsed_json: dict) -> LLMOutput:
         """
         Validate LLM output and convert to Pydantic models
 
@@ -376,6 +432,10 @@ class LLMParser:
             return DetailQueryOutput(**parsed_json)
         elif query_type == "chat":
             return ChatQueryOutput(**parsed_json)
+        elif query_type == "cart_action":
+            return CartActionOutput(**parsed_json)
+        elif query_type == "cart_view":
+            return CartViewOutput(**parsed_json)
         else:
             raise ValueError(f"Unknown query_type: {query_type}")
 

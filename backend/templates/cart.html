@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Cart - BeeKurse</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Your Cart</h1>
+            <p class="item-count">{{ count }} item{% if count != 1 %}s{% endif %}</p>
+        </header>
+
+        {% if items %}
+        <div class="items-list">
+            {% for item in items %}
+            <div class="product-card">
+                <div class="product-image">
+                    {% if item.image_url %}
+                    <img src="{{ item.image_url }}" alt="{{ item.prod_name }}" onerror="this.src='https://via.placeholder.com/120x120?text=No+Image'">
+                    {% else %}
+                    <img src="https://via.placeholder.com/120x120?text=No+Image" alt="No image">
+                    {% endif %}
+                </div>
+                <div class="product-details">
+                    <h2 class="product-name">{{ item.prod_name or 'Unknown Product' }}</h2>
+                    <div class="product-meta">
+                        {% if item.brand %}
+                        <p><span class="label">Brand:</span> {{ item.brand }}</p>
+                        {% endif %}
+                        {% if item.colour %}
+                        <p><span class="label">Color:</span> {{ item.colour }}</p>
+                        {% endif %}
+                        {% if item.size %}
+                        <p><span class="label">Size:</span> {{ item.size }}</p>
+                        {% endif %}
+                    </div>
+                    <p class="product-price">₹{{ item.price or 'N/A' }}</p>
+                    <p class="product-id">ID: {{ item.short_id or item.product_id }}</p>
+                </div>
+                <div class="product-actions">
+                    {% if whatsapp_number %}
+                    <a href="https://wa.me/{{ whatsapp_number }}?text=I%20want%20to%20buy%20{{ item.prod_name | urlencode }}%20(ID:%20{{ item.short_id }})"
+                       class="btn btn-buy" target="_blank">
+                        Buy Now
+                    </a>
+                    <a href="https://wa.me/{{ whatsapp_number }}?text=Tell%20me%20more%20about%20{{ item.short_id }}"
+                       class="btn btn-query" target="_blank">
+                        Ask Question
+                    </a>
+                    {% endif %}
+                    <button class="btn btn-remove" onclick="removeItem('{{ item.product_id }}')">
+                        Remove
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-icon">🛒</div>
+            <h2>Your cart is empty</h2>
+            <p>Search for products on WhatsApp and add them to your cart!</p>
+            {% if whatsapp_number %}
+            <a href="https://wa.me/{{ whatsapp_number }}?text=Show%20me%20some%20products" class="btn btn-primary">
+                Start Shopping
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <footer>
+            <p>Powered by BeeKurse</p>
+            {% if whatsapp_number %}
+            <a href="https://wa.me/{{ whatsapp_number }}" class="whatsapp-link">
+                Back to WhatsApp
+            </a>
+            {% endif %}
+        </footer>
+    </div>
+
+    <script>
+        const userId = "{{ user_id }}";
+
+        async function removeItem(productId) {
+            if (!confirm('Remove this item from your cart?')) return;
+
+            try {
+                const response = await fetch(`/cart/${userId}/remove`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ product_id: productId })
+                });
+
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to remove item');
+                }
+            } catch (error) {
+                alert('Error removing item');
+            }
+        }
+    </script>
+</body>
+</html>
