@@ -15,7 +15,6 @@ import asyncio
 from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime
 from memgraph_utils import MemgraphConnection, create_product_node, write_triplet_to_memgraph
-from init_property_vdb import add_property_to_vdb
 import chromadb
 from chromadb.config import Settings
 from langchain_huggingface import HuggingFaceEmbeddings

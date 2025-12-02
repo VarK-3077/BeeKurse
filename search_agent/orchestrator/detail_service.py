@@ -122,6 +122,7 @@ class ProductDetailService:
         # Step 5: Query Main VDB for semantic product information
         vdb_details = self._query_main_vdb_for_details(
             product.prod_name,
+            product.category,
             product.subcategory,
             properties_to_explain,
             query_keywords
@@ -244,6 +245,7 @@ class ProductDetailService:
     def _query_main_vdb_for_details(
         self,
         product_name: str,
+        category: str,
         subcategory: str,
         properties_to_explain: List[str],
         query_keywords: List[str]
@@ -253,6 +255,7 @@ class ProductDetailService:
 
         Args:
             product_name: Product name from SQL
+            category: Product category for filtering
             subcategory: Product subcategory
             properties_to_explain: Properties being asked about
             query_keywords: Keywords to search
@@ -268,6 +271,7 @@ class ProductDetailService:
                 query = f"{product_name} has {prop}"
                 try:
                     results = self.main_vdb.search_products(
+                        category=category,
                         subcategory=subcategory,
                         property_query=query,
                         top_k=3
@@ -286,6 +290,7 @@ class ProductDetailService:
             query = f"{product_name} {keyword}"
             try:
                 results = self.main_vdb.search_products(
+                    category=category,
                     subcategory=subcategory,
                     property_query=query,
                     top_k=3

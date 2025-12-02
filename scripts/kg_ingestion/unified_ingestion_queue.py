@@ -6,47 +6,18 @@ This module provides a shared queue system for both process_jsons and extract_re
 to output triplets to a unified Knowledge Graph ingestion worker.
 
 Architecture:
-    process_jsons (parallel) → Unified Queue → KG Ingestion Worker → Memgraph + Property VDB
-    extract_relations (parallel) → Unified Queue → KG Ingestion Worker → Memgraph + Property VDB
+    process_jsons (parallel) → Unified Queue → KG Ingestion Worker → Memgraph
+    extract_relations (parallel) → Unified Queue → KG Ingestion Worker → Memgraph
+
+Note: Property VDB population is handled separately in extract_relation_ingestion.py
 """
 
 import asyncio
+import json
 import os
-from typing import Dict, Any, Optional
+from datetime import datetime
+from typing import Dict, Any, Optional, List
 from memgraph_utils import MemgraphConnection, write_triplet_to_memgraph
-from init_property_vdb import add_property_to_vdb
-import chromadb
-from chromadb.config import Settings
-from langchain_huggingface import HuggingFaceEmbeddings
-
-
-# Property VDB Configuration
-PROPERTY_VDB_PATH = "../property_vdb"
-PROPERTY_COLLECTION_NAME = "product_properties"
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-
-
-def extract_property_type_from_relation(relation_name: str) -> str:
-    """
-    Extract property type from relation name.
-    Example: HAS_COLOR -> color, HAS_BRAND -> brand, SOLD_BY -> store
-
-    Args:
-        relation_name: Relation name (e.g., HAS_COLOR)
-
-    Returns:
-        Property type (e.g., color)
-    """
-    # Special case for SOLD_BY
-    if relation_name == "SOLD_BY":
-        return "store"
-
-    # For HAS_X patterns, extract X and convert to lowercase
-    if relation_name.startswith("HAS_"):
-        return relation_name[4:].lower()
-
-    # Default: use last word in lowercase
-    return relation_name.split('_')[-1].lower()
 
 
 class UnifiedIngestionQueue:
@@ -54,32 +25,26 @@ class UnifiedIngestionQueue:
     Unified queue for triplet ingestion from multiple sources.
     """
 
-    def __init__(self, use_property_vdb: bool = True):
-        """
-        Initialize the unified ingestion queue.
-
-        Args:
-            use_property_vdb: Whether to populate property VDB
-        """
+    def __init__(self):
+        """Initialize the unified ingestion queue."""
         self.queue = asyncio.Queue()
         self.stop_event = asyncio.Event()
         self.mg_conn = None
-        self.property_vdb_collection = None
-        self.property_embeddings = None
-        self.use_property_vdb = use_property_vdb
         self.worker_task = None
+
+        # Store all triplets for JSON backup
+        self.all_triplets: List[Dict[str, Any]] = []
 
         # Statistics
         self.stats = {
             "total_triplets": 0,
             "attribute_triplets": 0,
             "description_triplets": 0,
-            "property_vdb_entries": 0,
             "errors": 0
         }
 
     async def initialize(self):
-        """Initialize Memgraph connection and Property VDB."""
+        """Initialize Memgraph connection."""
         print("="*80)
         print("UNIFIED INGESTION QUEUE - INITIALIZATION")
         print("="*80)
@@ -88,45 +53,7 @@ class UnifiedIngestionQueue:
         print("Connecting to Memgraph...")
         self.mg_conn = MemgraphConnection()
         await self.mg_conn.connect()
-        print("✓ Memgraph connected")
-
-        # Initialize Property VDB if requested
-        if self.use_property_vdb:
-            print("Initializing Property VDB...")
-            try:
-                os.makedirs(PROPERTY_VDB_PATH, exist_ok=True)
-
-                # Initialize embedding function
-                self.property_embeddings = HuggingFaceEmbeddings(
-                    model_name=EMBEDDING_MODEL,
-                    model_kwargs={'device': 'cpu'},
-                    encode_kwargs={'normalize_embeddings': True}
-                )
-
-                # Initialize ChromaDB client
-                client = chromadb.PersistentClient(
-                    path=PROPERTY_VDB_PATH,
-                    settings=Settings(
-                        anonymized_telemetry=False,
-                        allow_reset=True # <-- FIX: Changed to True to match init_property_vdb.py
-                    )
-                )
-
-                # Get or create collection
-                try:
-                    self.property_vdb_collection = client.get_collection(name=PROPERTY_COLLECTION_NAME)
-                    print(f"✓ Using existing Property VDB collection")
-                except:
-                    self.property_vdb_collection = client.create_collection(
-                        name=PROPERTY_COLLECTION_NAME,
-                        metadata={"description": "Property value embeddings"}
-                    )
-                    print(f"✓ Created new Property VDB collection")
-
-            except Exception as e:
-                print(f"⚠ Warning: Could not initialize Property VDB: {e}")
-                self.property_vdb_collection = None
-                self.property_embeddings = None
+        print("Memgraph connected")
 
         print("="*80)
 
@@ -178,29 +105,6 @@ class UnifiedIngestionQueue:
                             self.stats["attribute_triplets"] += 1
                         elif source_type == "description":
                             self.stats["description_triplets"] += 1
-
-                        # Add to Property VDB if enabled (skip in dry-run mode)
-                        if self.property_vdb_collection and self.property_embeddings and not dry_run:
-                            try:
-                                relation_type = triplet["relation"]["type"]
-                                property_value = triplet["target"]["name"]
-                                property_type = extract_property_type_from_relation(relation_type)
-
-                                add_property_to_vdb(
-                                    self.property_vdb_collection,
-                                    self.property_embeddings,
-                                    property_type=property_type,
-                                    property_value=property_value,
-                                    metadata={
-                                        "product_id": triplet["source"].get("metadata", {}).get("product_id", ""),
-                                        "relation": relation_type,
-                                        "source_type": source_type
-                                    }
-                                )
-                                self.stats["property_vdb_entries"] += 1
-                            except Exception as e:
-                                print(f"[WORKER] Warning: Could not add to Property VDB: {e}")
-
                     else:
                         self.stats["errors"] += 1
 
@@ -222,10 +126,13 @@ class UnifiedIngestionQueue:
             triplet: Triplet dictionary (source, relation, target)
             source_type: Type of source ("attribute" or "description")
         """
-        await self.queue.put({
+        triplet_data = {
             "triplet": triplet,
             "source_type": source_type
-        })
+        }
+        # Store for JSON backup
+        self.all_triplets.append(triplet_data)
+        await self.queue.put(triplet_data)
 
     async def wait_for_completion(self):
         """Wait for all triplets in queue to be processed."""
@@ -239,8 +146,28 @@ class UnifiedIngestionQueue:
         if self.worker_task:
             await self.worker_task
 
+        # Save triplets to JSON backup
+        self.save_triplets_to_json()
+
         print("[QUEUE] Printing final statistics...")
         self.print_stats()
+
+    def save_triplets_to_json(self):
+        """Save all triplets to a JSON file for backup."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"triplets_backup_{timestamp}.json"
+        filepath = os.path.join(os.path.dirname(__file__), filename)
+
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "timestamp": timestamp,
+                    "total_count": len(self.all_triplets),
+                    "triplets": self.all_triplets
+                }, f, indent=2, ensure_ascii=False)
+            print(f"[QUEUE] Saved {len(self.all_triplets)} triplets to {filename}")
+        except Exception as e:
+            print(f"[QUEUE] Error saving triplets to JSON: {e}")
 
     async def cleanup(self):
         """Clean up resources."""
@@ -256,7 +183,6 @@ class UnifiedIngestionQueue:
         print(f"Total triplets ingested:     {self.stats['total_triplets']}")
         print(f"  - Attribute triplets:      {self.stats['attribute_triplets']}")
         print(f"  - Description triplets:    {self.stats['description_triplets']}")
-        print(f"Property VDB entries added:  {self.stats['property_vdb_entries']}")
         print(f"Errors:                      {self.stats['errors']}")
         print("="*80)
 

@@ -65,24 +65,17 @@ def init_property_vdb(vdb_path: str = PROPERTY_VDB_PATH):
         )
     )
 
-    # Create or get collection
+    # Get or create collection (non-destructive)
     try:
-        # Try to delete existing collection if it exists
-        try:
-            client.delete_collection(name=COLLECTION_NAME)
-            print(f"✓ Deleted existing collection: {COLLECTION_NAME}")
-        except:
-            pass
-
-        # Create new collection
-        collection = client.create_collection(
+        collection = client.get_or_create_collection(
             name=COLLECTION_NAME,
             metadata={"description": "Property value embeddings for curator algorithm"}
         )
-        print(f"✓ Created new collection: {COLLECTION_NAME}")
+        count = collection.count()
+        print(f"Collection '{COLLECTION_NAME}' ready ({count} existing embeddings)")
 
     except Exception as e:
-        print(f"Error creating collection: {e}")
+        print(f"Error accessing collection: {e}")
         raise
 
     print("\n" + "="*80)
