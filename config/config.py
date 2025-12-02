@@ -3,7 +3,12 @@ Configuration for Kurse Ecommerce Search Orchestrator - Test & Debug Version
 """
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal envs
+    def load_dotenv():
+        return None
 
 # Load environment variables from .env file
 load_dotenv()
@@ -147,6 +152,39 @@ class Config:
 
     DEBUG: bool = os.getenv("DEBUG", "True").lower() == "true"
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+
+    # ===== Vendor / Nunchi Flow Settings =====
+
+    # Registration
+    VENDOR_REGISTRATION_URL: str = os.getenv(
+        "VENDOR_REGISTRATION_URL", "https://vendor.example.com/register"
+    )
+    VENDOR_REGISTRY_FILE: str = os.getenv(
+        "VENDOR_REGISTRY_FILE",
+        str(BASE_DIR / "data" / "vendor_registry.json")
+    )
+
+    # Session handling
+    VENDOR_SESSION_LOCK_SECONDS: int = int(
+        os.getenv("VENDOR_SESSION_LOCK_SECONDS", "45")
+    )
+    VENDOR_SESSION_LOCK_MAX_SECONDS: int = int(
+        os.getenv("VENDOR_SESSION_LOCK_MAX_SECONDS", "60")
+    )
+    VENDOR_SESSION_LOCK_MIN_SECONDS: int = int(
+        os.getenv("VENDOR_SESSION_LOCK_MIN_SECONDS", "30")
+    )
+
+    # Similarity thresholds
+    VENDOR_SIMILARITY_THRESHOLD: float = float(
+        os.getenv("VENDOR_SIMILARITY_THRESHOLD", "0.82")
+    )
+    VENDOR_UPDATE_MIN_SIMILARITY: float = float(
+        os.getenv("VENDOR_UPDATE_MIN_SIMILARITY", "0.65")
+    )
+
+    # Intake queue
+    INTAKE_QUEUE_TABLE: str = os.getenv("INTAKE_QUEUE_TABLE", "intake_queue")
 
 
 # Singleton instance
