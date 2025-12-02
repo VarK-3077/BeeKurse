@@ -178,7 +178,16 @@ class VendorIntakeFlow:
     """Stateful flow manager for vendor intake sessions."""
 
     def __init__(self, sql_client: Optional[SQLClient] = None, registry: Optional[VendorRegistry] = None):
-        self.sql_client = sql_client or SQLClient()
+        # Use vendor test database if configured
+        if sql_client is None:
+            if config.USE_VENDOR_TEST_DB:
+                print(f"🧪 Using VENDOR TEST database: {config.VENDOR_TEST_DB_PATH}")
+                self.sql_client = SQLClient(db_path=config.VENDOR_TEST_DB_PATH)
+            else:
+                self.sql_client = SQLClient()
+        else:
+            self.sql_client = sql_client
+
         self.registry = registry or VendorRegistry(config.VENDOR_REGISTRY_FILE)
         self.sessions: Dict[str, SessionState] = {}
         self.intake = InventoryIntake(self.sql_client)

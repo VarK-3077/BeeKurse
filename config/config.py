@@ -155,13 +155,19 @@ class Config:
 
     # ===== Vendor / Nunchi Flow Settings =====
 
+    # Vendor data directory (mirrors user_data structure)
+    VENDOR_DATA_DIR: str = os.getenv(
+        "VENDOR_DATA_DIR",
+        str(BASE_DIR / "data" / "vendor_data")
+    )
+
     # Registration
     VENDOR_REGISTRATION_URL: str = os.getenv(
         "VENDOR_REGISTRATION_URL", "https://vendor.example.com/register"
     )
     VENDOR_REGISTRY_FILE: str = os.getenv(
         "VENDOR_REGISTRY_FILE",
-        str(BASE_DIR / "data" / "vendor_registry.json")
+        str(BASE_DIR / "data" / "vendor_data" / "vendor_registry.json")
     )
 
     # Session handling
@@ -185,6 +191,13 @@ class Config:
 
     # Intake queue
     INTAKE_QUEUE_TABLE: str = os.getenv("INTAKE_QUEUE_TABLE", "intake_queue")
+
+    # Vendor Test Database (separate from main inventory for testing)
+    VENDOR_TEST_DB_PATH: str = os.getenv(
+        "VENDOR_TEST_DB_PATH",
+        str(BASE_DIR / "data" / "databases" / "sql" / "vendor_test.db")
+    )
+    USE_VENDOR_TEST_DB: bool = os.getenv("USE_VENDOR_TEST_DB", "True").lower() == "true"
 
 
 # Singleton instance

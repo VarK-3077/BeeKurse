@@ -48,11 +48,12 @@ orchestrator = SearchOrchestrator()
 # Chat Handler
 chat_handler = ChatHandler()
 
-# SQL Client for product details
+# SQL Client for product details (main inventory)
 sql_client = SQLClient(db_path=config.SQL_DB_PATH)
 
-# Vendor intake flow
-vendor_flow = VendorIntakeFlow(sql_client=sql_client)
+# Vendor intake flow (uses test DB if configured, otherwise main DB)
+# Pass None to let VendorIntakeFlow decide based on USE_VENDOR_TEST_DB config
+vendor_flow = VendorIntakeFlow(sql_client=None)
 
 print("✅ Strontium Backend initialized successfully!")
 

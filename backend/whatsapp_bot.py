@@ -1,6 +1,8 @@
 # whatsapp_bot.py
 import os
+import json
 import requests
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from dotenv import load_dotenv
@@ -21,6 +23,46 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")                  # Your Meta access
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")       # e.g. "123456789012345"
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_verify_token_123")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5001/process")
+VENDOR_BACKEND_URL = os.getenv("VENDOR_BACKEND_URL", "http://localhost:5001/vendor/process")
+
+# Registry paths
+BASE_DIR = Path(__file__).parent.parent.absolute()
+USER_REGISTRY_PATH = BASE_DIR / "data" / "user_data" / "user_registry.json"
+VENDOR_REGISTRY_PATH = BASE_DIR / "data" / "vendor_data" / "vendor_registry.json"
+
+
+def _normalize_phone(phone: str) -> str:
+    """Normalize phone number for comparison."""
+    return phone.replace("+", "").replace("-", "").replace(" ", "")
+
+
+def is_registered_vendor(phone: str) -> bool:
+    """Check if a phone number is registered as a vendor."""
+    try:
+        if not VENDOR_REGISTRY_PATH.exists():
+            return False
+        with open(VENDOR_REGISTRY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        registered = data.get("registered", [])
+        normalized = _normalize_phone(phone)
+        return normalized in {_normalize_phone(v) for v in registered}
+    except Exception as e:
+        print(f"❌ Error checking vendor registry: {e}")
+        return False
+
+
+def is_registered_user(phone: str) -> bool:
+    """Check if a phone number is registered as a user."""
+    try:
+        if not USER_REGISTRY_PATH.exists():
+            return False
+        with open(USER_REGISTRY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        normalized = _normalize_phone(phone)
+        return normalized in {_normalize_phone(k) for k in data.keys()}
+    except Exception as e:
+        print(f"❌ Error checking user registry: {e}")
+        return False
 
 GRAPH_API_BASE = "https://graph.facebook.com/v20.0"
 
@@ -226,6 +268,51 @@ async def receive_webhook(request: Request):
         raw_user_text = message["text"]["body"]
         print(f"📩 Incoming message from {from_number}: {raw_user_text}")
 
+        # ===== Determine User Type: Vendor, User, or New User =====
+        is_vendor = is_registered_vendor(from_number)
+        is_user = is_registered_user(from_number)
+
+        # ===== VENDOR FLOW =====
+        if is_vendor:
+            print(f"🏪 Routing to VENDOR backend for {from_number}")
+            try:
+                backend_resp = requests.post(
+                    VENDOR_BACKEND_URL,
+                    json={
+                        "sender": from_number,
+                        "message": raw_user_text,
+                        "attachments": []
+                    },
+                    timeout=30
+                )
+                backend_resp.raise_for_status()
+                backend_data = backend_resp.json()
+            except Exception as e:
+                print("❌ Error calling vendor backend:", e)
+                send_whatsapp_text_message(
+                    from_number,
+                    "Something went wrong processing your vendor request. Try again later."
+                )
+                return JSONResponse({"status": "vendor_backend_error"}, status_code=200)
+
+            # Handle vendor response (usually {"messages": [...]})
+            if "messages" in backend_data:
+                for msg in backend_data["messages"]:
+                    if msg["type"] == "image":
+                        send_whatsapp_image_message(from_number, msg["url"], caption="")
+                    elif msg["type"] == "text":
+                        send_whatsapp_text_message(from_number, msg["text"])
+            elif "reply" in backend_data:
+                send_whatsapp_text_message(from_number, backend_data["reply"])
+
+            return JSONResponse({"status": "vendor_handled"}, status_code=200)
+        # ===== END VENDOR FLOW =====
+
+        # ===== USER FLOW (existing user or new user - new users default to user onboarding) =====
+        # Note: If not a vendor and not an existing user, they're a new user (default)
+        if not is_user:
+            print(f"🆕 New user detected: {from_number} - Starting user onboarding")
+
         # ===== User Management Check =====
         user_manager = get_user_manager()
         onboarding_response = user_manager.process_message(from_number, raw_user_text)
@@ -251,7 +338,8 @@ async def receive_webhook(request: Request):
         # Resolve short IDs for search queries
         user_text = resolve_short_ids_in_text(raw_user_text)
 
-        # ===== Call your backend =====
+        # ===== Call USER backend =====
+        print(f"👤 Routing to USER backend for {from_number}")
         try:
             backend_resp = requests.post(
                 BACKEND_URL,
@@ -344,7 +432,10 @@ if __name__ == "__main__":
     print("="*80)
     print(f"📍 Webhook endpoint: http://0.0.0.0:8000/webhook")
     print(f"🔑 Verify token: {VERIFY_TOKEN}")
-    print(f"🔗 Backend URL: {BACKEND_URL}")
+    print(f"👤 User Backend URL: {BACKEND_URL}")
+    print(f"🏪 Vendor Backend URL: {VENDOR_BACKEND_URL}")
+    print(f"📋 User Registry: {USER_REGISTRY_PATH}")
+    print(f"📋 Vendor Registry: {VENDOR_REGISTRY_PATH}")
     print("="*80 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
