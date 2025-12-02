@@ -1,16 +1,25 @@
 """
-Extract Relation Ingestion - Debug Version with JSON Output
-(Modified: Step 2 uses Semantic Similarity instead of LLM)
+Extract Relation Ingestion - Optimized Pipeline with Batch Verification
 
-This module provides a streaming queue-based pipeline for extracting relations
-from product descriptions and outputting them to JSONL files for analysis.
+This module provides an optimized pipeline for extracting relations from product
+descriptions with semantic standardization and batch verification.
 
-Pipeline: Agent1 (parallel) → Queue1 → VDB Similarity Check (workers) → Queue2 →
-          Verification (parallel workers) → Queue3 → File Output (sequential)
+Pipeline (per product):
+1. Agent1 (parallel) - Extract triplets from description chunks
+2. Semantic Standardizer - Compare relations to VDB, standardize or add new
+3. Batch Verification (1 LLM call) - Verify ALL triplets in one call (keep/drop)
+4. Output - Add verified triplets to queue and Property VDB
 
-Output files:
-- Triplets file (JSONL): Final validated triplets
-- Debug file: Intermediate processing steps for analysis
+Key Features:
+- Semantic similarity for relation standardization (threshold: 0.85)
+- Per-product batch verification (90-95% fewer LLM calls vs per-triplet)
+- Property VDB population for search (format: {Type}:{Value})
+- Type extraction from relation names (HAS_COLOR -> Color)
+
+Output:
+- Triplets queued to UnifiedIngestionQueue
+- Properties added to Property VDB for search semantic matching
+- Debug file with intermediate processing steps
 """
 
 import asyncio
@@ -33,12 +42,11 @@ from langchain_core.runnables import RunnableLambda
 # Import queue helpers
 from unified_ingestion_queue import UnifiedIngestionQueue, get_global_queue, shutdown_global_queue
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file in parent directory
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # --- Configuration ---
-# Updated path as requested
-CUSTOM_RELATIONS_VDB_PATH = r"\\wsl.localhost\Ubuntu\home\sabhi\BeeKurse\scripts\kg_ingestion\custom_relations_vdb"
+CUSTOM_RELATIONS_VDB_PATH = os.path.join(os.path.dirname(__file__), "custom_relations_vdb")
 COLLECTION_NAME = "ecommerce_relations"
 NUM_VERIFICATION_WORKERS = 3  # Number of parallel verification workers
 SIMILARITY_THRESHOLD = 0.85   # Threshold for standardizing relations
@@ -113,6 +121,20 @@ custom_relations_vdb = Chroma(
 )
 print(f"[INGESTION] Custom Relations VDB loaded from {CUSTOM_RELATIONS_VDB_PATH}")
 
+# --- Load Property VDB for search ---
+# Property VDB stores properties in {Type}:{Value} format for semantic search
+PROPERTY_VDB_PATH = os.path.join(os.path.dirname(__file__), "..", "property_vdb")
+PROPERTY_COLLECTION_NAME = "product_properties"
+
+# Initialize Property VDB (create directory if needed)
+os.makedirs(PROPERTY_VDB_PATH, exist_ok=True)
+property_vdb = Chroma(
+    persist_directory=PROPERTY_VDB_PATH,
+    embedding_function=embeddings,
+    collection_name=PROPERTY_COLLECTION_NAME
+)
+print(f"[INGESTION] Property VDB loaded from {PROPERTY_VDB_PATH}")
+
 # --- Data Schemas ---
 class RawTriplet(BaseModel):
     subject: str
@@ -127,6 +149,14 @@ class ExtractionOutput(BaseModel):
 class VerificationResult(BaseModel):
     is_valid: bool = Field(..., description="Whether the relation is valid and supported by text")
     reason: str = Field(..., description="Specific reasoning for validation or rejection")
+
+
+class BatchVerificationResult(BaseModel):
+    """Result of batch verification - decisions for all triplets in one call."""
+    decisions: List[str] = Field(
+        ...,
+        description="List of 'keep' or 'drop' decisions for each triplet in order"
+    )
 
 class StandardizedTriplet(BaseModel):
     subject: str
@@ -240,6 +270,26 @@ Output JSON format:
 {format_instructions}
 """
 
+BATCH_VERIFY_PROMPT = """You are a fact-checking agent verifying multiple extracted relations for a product.
+
+CRITICAL: Output ONLY valid JSON. Do NOT include any thinking, reasoning, explanations, or XML tags. Start your response directly with the JSON object.
+
+For EACH triplet below, decide:
+- "keep" if the relation is explicitly supported by the product description
+- "drop" if it's a hallucination, contradiction, not supported by text, or nonsensical
+
+### PRODUCT DESCRIPTION:
+{description}
+
+### TRIPLETS TO VERIFY (in order):
+{triplets_list}
+
+You MUST output exactly {num_triplets} decisions, one for each triplet in the same order.
+
+Output JSON format:
+{format_instructions}
+"""
+
 # --- Helper: Extract JSON from LLM output (handles thinking text) ---
 def extract_json_from_output(text: str) -> str:
     import re
@@ -290,6 +340,15 @@ verify_prompt = ChatPromptTemplate.from_messages([
 verify_chain = verify_prompt.partial(
     format_instructions=verify_parser.get_format_instructions()
 ) | RunnableLambda(get_next_verifier) | (lambda x: extract_json_from_output(x.content)) | verify_parser
+
+# Batch verification chain - verifies all triplets from a product in one call
+batch_verify_parser = JsonOutputParser(pydantic_object=BatchVerificationResult)
+batch_verify_prompt = ChatPromptTemplate.from_messages([
+    ("system", BATCH_VERIFY_PROMPT)
+])
+batch_verify_chain = batch_verify_prompt.partial(
+    format_instructions=batch_verify_parser.get_format_instructions()
+) | RunnableLambda(get_next_verifier) | (lambda x: extract_json_from_output(x.content)) | batch_verify_parser
 
 # --- Helper Functions ---
 def split_into_sentences(text: str) -> List[str]:
@@ -345,8 +404,99 @@ def add_relation_to_custom_vdb(relation_name: str, subject: str, object: str):
     except Exception as e:
         print(f"  [VDB ERROR] Failed to add relation: {e}")
 
-def normalize_node_type(node_type: str, node_value: str) -> str:
-    return "property"
+
+def add_property_to_property_vdb(relation: str, property_value: str, product_id: str):
+    """Add property to Property VDB for search semantic matching.
+
+    Format: {Type}:{Value} (e.g., Color:Red, Size:Large, Brand:Nike)
+
+    Args:
+        relation: The relation name (e.g., HAS_COLOR, HAS_SIZE)
+        property_value: The property value (e.g., Red, Large, Nike)
+        product_id: The product ID for metadata
+    """
+    dry_run = os.getenv("DEBUG_DRY_RUN") == "true"
+
+    try:
+        # Extract type from relation name
+        property_type = extract_type_from_relation(relation)
+        property_string = f"{property_type}:{property_value}"
+
+        # Check for near-duplicates to avoid VDB bloat
+        existing = property_vdb.similarity_search_with_relevance_score(property_string, k=1)
+        if existing and existing[0][1] > 0.98:
+            # Near-exact match already exists
+            return
+
+        if dry_run:
+            print(f"  [PROP VDB DRY-RUN] Would add: {property_string}")
+        else:
+            doc = Document(
+                page_content=property_string,
+                metadata={
+                    "property_type": property_type.lower(),
+                    "property_value": property_value,
+                    "property_string": property_string,
+                    "product_id": product_id,
+                    "source": "extract_relation_ingestion"
+                }
+            )
+            property_vdb.add_documents([doc])
+            print(f"  [PROP VDB] Added: {property_string}")
+
+    except Exception as e:
+        print(f"  [PROP VDB ERROR] Failed to add property: {e}")
+
+
+def extract_type_from_relation(relation: str) -> str:
+    """Extract property type from relation name.
+
+    Examples:
+        HAS_COLOR -> Color
+        HAS_SIZE -> Size
+        HAS_REFRESH_RATE -> Refresh Rate
+        SOLD_BY -> Store
+        MADE_BY -> Brand
+    """
+    relation_upper = relation.upper()
+
+    # Special cases for non-HAS_ relations
+    if relation_upper in ("SOLD_BY", "AVAILABLE_AT"):
+        return "Store"
+    if relation_upper == "MADE_BY":
+        return "Brand"
+    if relation_upper == "BELONGS_TO":
+        return "Category"
+    if relation_upper == "COMPATIBLE_WITH":
+        return "Compatibility"
+    if relation_upper == "SUPPORTS":
+        return "Feature"
+
+    # Standard HAS_X pattern
+    if relation_upper.startswith("HAS_"):
+        type_part = relation[4:]  # Remove "HAS_"
+        # Convert REFRESH_RATE to Refresh Rate
+        return type_part.replace("_", " ").title()
+
+    # Fallback: use the relation name itself, title-cased
+    return relation.replace("_", " ").title()
+
+
+def normalize_node_type(node_type: str, node_value: str, relation: str = "") -> str:
+    """Normalize node type based on relation name.
+
+    For subject_type: Keep 'product' if it's the product node.
+    For object_type: Extract type from relation name (e.g., HAS_SIZE -> Size).
+    """
+    # If it's explicitly a product, keep it
+    if node_type.lower() == "product":
+        return "product"
+
+    # If relation is provided, extract type from it
+    if relation:
+        return extract_type_from_relation(relation)
+
+    return "Property"
 
 def format_triplet_output(triplet: StandardizedTriplet, product_id: str, product_name: str, document_id: str, chunk_id: int, category: str = "Product") -> dict:
     sanitized_category = category.replace(' ', '_').replace('-', '_')
@@ -373,15 +523,7 @@ def format_triplet_output(triplet: StandardizedTriplet, product_id: str, product
         },
         "target": {
             "name": triplet.object,
-            "type": triplet.object_type,
-            "metadata": {
-                "product_id": product_id,
-                "document_id": document_id,
-                "chunk_id": f"sentence_{chunk_id}"
-            },
-            "properties": {
-                "product_name": product_name
-            }
+            "type": triplet.object_type
         }
     }
 
@@ -465,6 +607,7 @@ async def semantic_standardize_worker(
     print(f"  [Worker{worker_id}] Semantic Similarity Standardizer started")
 
     while True:
+        item = None
         try:
             # Wait for item from Queue1 with timeout
             item = await asyncio.wait_for(queue1.get(), timeout=0.1)
@@ -477,30 +620,42 @@ async def semantic_standardize_worker(
             chunk_text = item["chunk_text"]
 
             raw_relation = triplet.relation
-
-            # --- Semantic Search Step ---
-            # Perform similarity search with relevance score
-            # Note: LangChain Chroma usually returns cosine similarity (0-1) or distance based on config.
-            # 'similarity_search_with_relevance_score' attempts to return a 0-1 score where 1 is best.
-            
-            results = custom_relations_vdb.similarity_search_with_relevance_score(raw_relation, k=1)
-            
             final_relation = raw_relation
             is_raw = True
             decision = "USE_RAW"
             similarity_score = 0.0
             matched_vdb_relation = None
 
-            if results:
-                doc, score = results[0]
-                similarity_score = score
-                matched_vdb_relation = doc.metadata.get("relation", doc.page_content)
-                
-                if score > SIMILARITY_THRESHOLD:
-                    final_relation = matched_vdb_relation
-                    is_raw = False
-                    decision = "USE_STANDARD"
-            
+            # --- Semantic Search Step with retry ---
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    # Perform similarity search with relevance score
+                    # Note: LangChain Chroma returns 0-1 score where 1 is best (higher = more similar)
+                    results = custom_relations_vdb.similarity_search_with_relevance_score(raw_relation, k=1)
+
+                    if results:
+                        doc, score = results[0]
+                        similarity_score = score
+                        matched_vdb_relation = doc.metadata.get("relation", doc.page_content)
+
+                        if score > SIMILARITY_THRESHOLD:
+                            final_relation = matched_vdb_relation
+                            is_raw = False
+                            decision = "USE_STANDARD"
+                    break  # Success, exit retry loop
+
+                except Exception as search_error:
+                    if attempt < max_retries - 1:
+                        debug_file.write(f"[SEMANTIC RETRY] Worker{worker_id} | Chunk {chunk_id} | Attempt {attempt + 1} | Error: {search_error}\n")
+                        debug_file.flush()
+                        await asyncio.sleep(0.1)  # Brief delay before retry
+                    else:
+                        # Final attempt failed - use raw relation and continue
+                        debug_file.write(f"[SEMANTIC ERROR] Worker{worker_id} | Chunk {chunk_id} | Using raw relation after {max_retries} attempts | Error: {search_error}\n")
+                        debug_file.flush()
+                        # Keep is_raw=True, final_relation=raw_relation (defaults)
+
             search_time = time.time() - step_start
 
             # Log decision
@@ -517,12 +672,12 @@ async def semantic_standardize_worker(
             if is_raw:
                 add_relation_to_custom_vdb(final_relation, triplet.subject, triplet.object)
                 debug_file.write(f"  Action: Added '{final_relation}' to VDB\n")
-            
+
             debug_file.flush()
 
-            # Step 4: Normalize node types
+            # Step 4: Normalize node types - extract type from relation for object
             normalized_subject_type = normalize_node_type(triplet.subject_type, triplet.subject)
-            normalized_object_type = normalize_node_type(triplet.object_type, triplet.object)
+            normalized_object_type = normalize_node_type(triplet.object_type, triplet.object, final_relation)
 
             # Create standardized triplet
             std_triplet = StandardizedTriplet(
@@ -550,6 +705,29 @@ async def semantic_standardize_worker(
                 break
         except Exception as e:
             print(f"  [Worker{worker_id}] Semantic Error: {e}")
+            debug_file.write(f"[SEMANTIC FATAL] Worker{worker_id} | Error: {e}\n")
+            debug_file.flush()
+            # Pass triplet through with raw relation to avoid data loss
+            if item is not None:
+                triplet = item["triplet"]
+                chunk_id = item["chunk_id"]
+                chunk_text = item["chunk_text"]
+                # Create triplet with raw relation and pass through
+                std_triplet = StandardizedTriplet(
+                    subject=triplet.subject,
+                    subject_type=normalize_node_type(triplet.subject_type, triplet.subject),
+                    relation=triplet.relation,
+                    object=triplet.object,
+                    object_type=extract_type_from_relation(triplet.relation),
+                    is_raw_relation=True
+                )
+                await queue2.put({
+                    "triplet": std_triplet,
+                    "chunk_id": chunk_id,
+                    "chunk_text": chunk_text
+                })
+                debug_file.write(f"[SEMANTIC FALLBACK] Passed through with raw relation: {triplet.relation}\n")
+                debug_file.flush()
             queue1.task_done()
 
 async def verification_worker(
@@ -665,7 +843,10 @@ async def file_output_worker(
                 entity_type_tracker[triplet.object] = triplet.object_type
 
             triplet_dict = format_triplet_output(triplet, product_id, product_name, document_id, chunk_id, category)
-            
+
+            # Add property to Property VDB for search semantic matching
+            add_property_to_property_vdb(triplet.relation, triplet.object, product_id)
+
             if queue:
                 await queue.add_triplet(triplet_dict, source_type="description")
                 triplet_count += 1
@@ -682,6 +863,101 @@ async def file_output_worker(
 
     return triplet_count
 
+
+async def batch_verify_triplets(
+    triplets: List[StandardizedTriplet],
+    description: str,
+    debug_file
+) -> List[StandardizedTriplet]:
+    """Batch verify all triplets from a product in a single LLM call.
+
+    Args:
+        triplets: List of standardized triplets to verify
+        description: Full product description for context
+        debug_file: Debug file handle for logging
+
+    Returns:
+        List of verified triplets (only those marked as 'keep')
+    """
+    import time
+
+    if not triplets:
+        return []
+
+    # Format triplets for the prompt
+    triplets_list = "\n".join([
+        f"{i+1}. ({t.subject}) -[{t.relation}]-> ({t.object})"
+        for i, t in enumerate(triplets)
+    ])
+
+    verify_start = time.time()
+    max_retries = 2
+    verified_triplets = []
+
+    for attempt in range(max_retries):
+        try:
+            result = await batch_verify_chain.ainvoke({
+                "description": description,
+                "triplets_list": triplets_list,
+                "num_triplets": len(triplets)
+            })
+
+            if result is None:
+                raise Exception("LLM returned None or invalid JSON")
+
+            batch_result = BatchVerificationResult(**result)
+            decisions = batch_result.decisions
+
+            # Validate we got the right number of decisions
+            if len(decisions) != len(triplets):
+                debug_file.write(f"[BATCH VERIFY WARNING] Expected {len(triplets)} decisions, got {len(decisions)}\n")
+                # Pad or truncate decisions
+                if len(decisions) < len(triplets):
+                    decisions = decisions + ["keep"] * (len(triplets) - len(decisions))
+                else:
+                    decisions = decisions[:len(triplets)]
+
+            verify_time = time.time() - verify_start
+
+            # Log batch verification
+            debug_file.write(f"\n{'='*80}\n")
+            debug_file.write(f"[BATCH VERIFICATION] Time: {verify_time:.2f}s | Triplets: {len(triplets)} | Attempt: {attempt + 1}\n")
+
+            kept_count = 0
+            dropped_count = 0
+
+            for i, (triplet, decision) in enumerate(zip(triplets, decisions)):
+                decision_lower = decision.lower().strip()
+                if decision_lower == "keep":
+                    verified_triplets.append(triplet)
+                    kept_count += 1
+                    debug_file.write(f"  {i+1}. KEEP: ({triplet.subject}) -[{triplet.relation}]-> ({triplet.object})\n")
+                else:
+                    dropped_count += 1
+                    debug_file.write(f"  {i+1}. DROP: ({triplet.subject}) -[{triplet.relation}]-> ({triplet.object})\n")
+
+            debug_file.write(f"[BATCH VERIFY RESULT] Kept: {kept_count}, Dropped: {dropped_count}\n")
+            debug_file.flush()
+
+            print(f"  [BatchVerify] Verified {len(triplets)} triplets: {kept_count} kept, {dropped_count} dropped ({verify_time:.2f}s)")
+            break
+
+        except Exception as e:
+            verify_time = time.time() - verify_start
+            if attempt < max_retries - 1:
+                print(f"  [BatchVerify RETRY] Attempt {attempt + 1}: {str(e)[:100]}...")
+                debug_file.write(f"[BATCH VERIFY RETRY] Attempt {attempt + 1} | Error: {e}\n")
+                debug_file.flush()
+            else:
+                # On final failure, keep all triplets (fail-open)
+                print(f"  [BatchVerify ERROR] Failed after {max_retries} attempts, keeping all triplets")
+                debug_file.write(f"[BATCH VERIFY ERROR] Final error: {e} | Keeping all triplets\n")
+                debug_file.flush()
+                verified_triplets = triplets
+
+    return verified_triplets
+
+
 # --- Main Function ---
 
 async def extract_relations_from_description(
@@ -693,11 +969,19 @@ async def extract_relations_from_description(
     debug_file,
     category: str = "Product"
 ) -> int:
+    """Extract relations from product description using batch verification.
+
+    Pipeline:
+    1. Agent1 extracts triplets from description chunks (parallel)
+    2. Semantic Standardizer normalizes relations via VDB similarity
+    3. Batch Verification - ALL triplets verified in ONE LLM call per product
+    4. Output verified triplets and add properties to Property VDB
+    """
     if not description or not description.strip():
         return 0
 
     print(f"\n[INGESTION] Processing product {product_id}")
-    
+
     debug_file.write(f"\n{'='*80}\n")
     debug_file.write(f"[START] Product: {product_id} | Document: {document_id}\n")
     debug_file.write(f"[START] Timestamp: {datetime.utcnow().isoformat()}Z\n")
@@ -706,28 +990,113 @@ async def extract_relations_from_description(
     sentences = adaptive_chunk_description(description)
     print(f"[INGESTION] Chunked into {len(sentences)} chunks")
 
+    # --- Phase 1: Extraction ---
     queue1 = asyncio.Queue()  # Agent1 → Semantic Standardizer
-    queue2 = asyncio.Queue()  # Semantic Standardizer → Verification
-    queue3 = asyncio.Queue()  # Verification → File output
+    collected_triplets: List[StandardizedTriplet] = []  # Collect all standardized triplets
     stop_event = asyncio.Event()
 
-    entity_type_tracker: Dict[str, str] = {}
+    # Start Semantic Standardizer worker that collects into list instead of queue
+    async def collecting_semantic_worker():
+        """Modified semantic worker that collects triplets instead of passing to queue."""
+        print(f"  [Worker0] Semantic Similarity Standardizer started (collecting mode)")
 
-    # Start Semantic Standardizer worker (1 sequential to avoid VDB race conditions)
-    rag_worker = asyncio.create_task(
-        semantic_standardize_worker(0, queue1, queue2, stop_event, debug_file)
-    )
+        while True:
+            item = None
+            try:
+                item = await asyncio.wait_for(queue1.get(), timeout=0.1)
 
-    # Verification workers
-    verify_workers = [
-        asyncio.create_task(verification_worker(i, queue2, queue3, stop_event, debug_file))
-        for i in range(NUM_VERIFICATION_WORKERS)
-    ]
+                import time
+                step_start = time.time()
 
-    # File output worker
-    output_worker = asyncio.create_task(
-        file_output_worker(queue3, stop_event, product_id, product_name, document_id, queue, entity_type_tracker, category)
-    )
+                triplet = item["triplet"]
+                chunk_id = item["chunk_id"]
+
+                raw_relation = triplet.relation
+                final_relation = raw_relation
+                is_raw = True
+                decision = "USE_RAW"
+                similarity_score = 0.0
+                matched_vdb_relation = None
+
+                # Semantic Search Step with retry
+                max_retries = 2
+                for attempt in range(max_retries):
+                    try:
+                        results = custom_relations_vdb.similarity_search_with_relevance_score(raw_relation, k=1)
+
+                        if results:
+                            doc, score = results[0]
+                            similarity_score = score
+                            matched_vdb_relation = doc.metadata.get("relation", doc.page_content)
+
+                            if score > SIMILARITY_THRESHOLD:
+                                final_relation = matched_vdb_relation
+                                is_raw = False
+                                decision = "USE_STANDARD"
+                        break
+
+                    except Exception as search_error:
+                        if attempt < max_retries - 1:
+                            debug_file.write(f"[SEMANTIC RETRY] Attempt {attempt + 1} | Error: {search_error}\n")
+                            debug_file.flush()
+                            await asyncio.sleep(0.1)
+                        else:
+                            debug_file.write(f"[SEMANTIC ERROR] Using raw relation | Error: {search_error}\n")
+                            debug_file.flush()
+
+                search_time = time.time() - step_start
+
+                # Log decision
+                debug_file.write(f"\n[SEMANTIC STANDARDIZE] Chunk {chunk_id}\n")
+                debug_file.write(f"  Raw: {raw_relation} | Match: {matched_vdb_relation} (Score: {similarity_score:.4f})\n")
+                debug_file.write(f"  Decision: {decision} | Final: {final_relation} | Time: {search_time:.4f}s\n")
+                debug_file.flush()
+
+                # VDB Update Step
+                if is_raw:
+                    add_relation_to_custom_vdb(final_relation, triplet.subject, triplet.object)
+
+                # Normalize node types
+                normalized_subject_type = normalize_node_type(triplet.subject_type, triplet.subject)
+                normalized_object_type = normalize_node_type(triplet.object_type, triplet.object, final_relation)
+
+                # Create and collect standardized triplet
+                std_triplet = StandardizedTriplet(
+                    subject=triplet.subject,
+                    subject_type=normalized_subject_type,
+                    relation=final_relation,
+                    object=triplet.object,
+                    object_type=normalized_object_type,
+                    is_raw_relation=is_raw
+                )
+                collected_triplets.append(std_triplet)
+
+                queue1.task_done()
+
+            except asyncio.TimeoutError:
+                if stop_event.is_set() and queue1.empty():
+                    print(f"  [Worker0] Semantic Standardizer stopping. Collected {len(collected_triplets)} triplets")
+                    break
+            except Exception as e:
+                print(f"  [Worker0] Semantic Error: {e}")
+                debug_file.write(f"[SEMANTIC FATAL] Error: {e}\n")
+                debug_file.flush()
+                # Pass triplet through with raw relation to avoid data loss
+                if item is not None:
+                    triplet = item["triplet"]
+                    std_triplet = StandardizedTriplet(
+                        subject=triplet.subject,
+                        subject_type=normalize_node_type(triplet.subject_type, triplet.subject),
+                        relation=triplet.relation,
+                        object=triplet.object,
+                        object_type=extract_type_from_relation(triplet.relation),
+                        is_raw_relation=True
+                    )
+                    collected_triplets.append(std_triplet)
+                queue1.task_done()
+
+    # Start workers
+    semantic_worker_task = asyncio.create_task(collecting_semantic_worker())
 
     # Start Agent1 extraction tasks
     extraction_tasks = [
@@ -739,18 +1108,47 @@ async def extract_relations_from_description(
     print("[INGESTION] Agent1 extraction complete")
 
     await queue1.join()
-    print("[INGESTION] Semantic Standardizer complete")
-
-    await queue2.join()
-    print("[INGESTION] Verification complete")
-
-    await queue3.join()
-    print("[INGESTION] File output queue processed")
-
     stop_event.set()
-    await asyncio.gather(rag_worker, *verify_workers, return_exceptions=True)
+    await semantic_worker_task
+    print(f"[INGESTION] Semantic Standardizer complete. Collected {len(collected_triplets)} triplets")
 
-    triplet_count = await output_worker
+    # --- Phase 2: Batch Verification (ONE LLM call for ALL triplets) ---
+    if collected_triplets:
+        verified_triplets = await batch_verify_triplets(collected_triplets, description, debug_file)
+    else:
+        verified_triplets = []
+
+    print(f"[INGESTION] Batch verification complete. {len(verified_triplets)} triplets verified")
+
+    # --- Phase 3: Output and Property VDB ---
+    entity_type_tracker: Dict[str, str] = {}
+    triplet_count = 0
+
+    for i, triplet in enumerate(verified_triplets):
+        # Entity type consistency tracking
+        if triplet.subject in entity_type_tracker:
+            if entity_type_tracker[triplet.subject] != triplet.subject_type:
+                triplet.subject_type = entity_type_tracker[triplet.subject]
+        else:
+            entity_type_tracker[triplet.subject] = triplet.subject_type
+
+        if triplet.object in entity_type_tracker:
+            if entity_type_tracker[triplet.object] != triplet.object_type:
+                triplet.object_type = entity_type_tracker[triplet.object]
+        else:
+            entity_type_tracker[triplet.object] = triplet.object_type
+
+        triplet_dict = format_triplet_output(triplet, product_id, product_name, document_id, i, category)
+
+        # Add property to Property VDB for search semantic matching
+        add_property_to_property_vdb(triplet.relation, triplet.object, product_id)
+
+        if queue:
+            await queue.add_triplet(triplet_dict, source_type="description")
+            triplet_count += 1
+            print(f"  [Output] Queued: ({triplet.subject})-[{triplet.relation}]->({triplet.object})")
+        else:
+            print(f"  [WARN] No queue provided, skipping triplet for {product_id}")
 
     print(f"[INGESTION] Complete. Wrote {triplet_count} valid triplets")
     debug_file.write(f"\n{'='*80}\n")
