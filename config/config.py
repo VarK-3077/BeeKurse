@@ -32,7 +32,7 @@ class Config:
     # Vector Database Paths
     MAIN_VDB_PATH: str = os.getenv(
         "MAIN_VDB_PATH",
-        str(BASE_DIR / "data" / "databases" / "vector_db" / "Main Vector_Database")
+        str(BASE_DIR / "data" / "databases" / "vector_db" / "Main_Vector_Database")
     )
 
     PROPERTY_VDB_PATH: str = os.getenv(
