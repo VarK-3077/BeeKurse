@@ -221,7 +221,7 @@ class TimedTestRunner:
             for i, product_id in enumerate(all_product_ids[:5], 1):
                 product = products_dict.get(product_id)
                 if product:
-                    print(f"    {i}. {product.prod_name} - ${product.price}")
+                    print(f"    {i}. {product.prod_name} - {product.price}")
                     print(f"       ID: {product.product_id} | Rating: {product.rating} | Stock: {product.stock}")
                 else:
                     print(f"    {i}. Product {product_id} (details not found)")

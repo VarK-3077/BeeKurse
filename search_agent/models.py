@@ -121,15 +121,18 @@ class SQLProduct(BaseModel):
     subcategory: Optional[str] = None
     brand: Optional[str] = None
     colour: Optional[str] = None
-    descrption: Optional[str] = None  # Note: typo matches actual DB
+    description: Optional[str] = None
     dimensions: Optional[str] = None
     imageid: Optional[str] = None
     price: Optional[float] = None
     quantity: Optional[int] = None
-    qunatityunit: Optional[str] = None  # Note: typo matches actual DB
+    quantityunit: Optional[str] = None
     rating: Optional[float] = None
     size: Optional[str] = None
     stock: Optional[int] = None
+    store_contact: Optional[str] = None
+    store_location: Optional[dict] = None
+    other_properties: Optional[dict] = None
 
 
 class KGNode(BaseModel):

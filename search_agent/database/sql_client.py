@@ -4,6 +4,7 @@ SQL Database Client for inventory and product data
 import sqlite3
 import numpy as np
 import pickle
+import json
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
@@ -44,15 +45,18 @@ class SQLClient:
                 subcategory TEXT,
                 brand TEXT,
                 colour TEXT,
-                descrption TEXT,
+                description TEXT,
                 dimensions TEXT,
                 imageid TEXT,
                 price REAL,
                 quantity INTEGER,
-                qunatityunit TEXT,
+                quantityunit TEXT,
                 rating REAL,
                 size TEXT,
-                stock INTEGER
+                stock INTEGER,
+                store_contact TEXT,
+                store_location TEXT,
+                other_properties TEXT
             )
         """)
 
@@ -62,7 +66,7 @@ class SQLClient:
                 product_id TEXT PRIMARY KEY,
                 subcategory TEXT NOT NULL,
                 embedding BLOB NOT NULL,
-                FOREIGN KEY (product_id) REFERENCES products(id)
+                FOREIGN KEY (product_id) REFERENCES product_table(product_id)
             )
         """)
 
@@ -118,7 +122,16 @@ class SQLClient:
 
         row = cursor.fetchone()
         if row:
-            return SQLProduct(**dict(row))
+            # Convert row to a mutable dictionary
+            product_data = dict(row)
+            
+            # Deserialize JSON strings back to dicts
+            if product_data.get('store_location') and isinstance(product_data['store_location'], str):
+                product_data['store_location'] = json.loads(product_data['store_location'])
+            if product_data.get('other_properties') and isinstance(product_data['other_properties'], str):
+                product_data['other_properties'] = json.loads(product_data['other_properties'])
+                
+            return SQLProduct(**product_data)
         return None
 
     def get_products_by_ids(self, product_ids: List[str]) -> Dict[str, SQLProduct]:
@@ -145,7 +158,16 @@ class SQLClient:
 
         results = {}
         for row in cursor.fetchall():
-            product = SQLProduct(**dict(row))
+            # Convert row to a mutable dictionary
+            product_data = dict(row)
+            
+            # Deserialize JSON strings back to dicts
+            if product_data.get('store_location') and isinstance(product_data['store_location'], str):
+                product_data['store_location'] = json.loads(product_data['store_location'])
+            if product_data.get('other_properties') and isinstance(product_data['other_properties'], str):
+                product_data['other_properties'] = json.loads(product_data['other_properties'])
+            
+            product = SQLProduct(**product_data)
             results[product.product_id] = product
 
         return results
@@ -178,7 +200,19 @@ class SQLClient:
 
         cursor.execute(query, params)
 
-        return [SQLProduct(**dict(row)) for row in cursor.fetchall()]
+        product_list = []
+        for row in cursor.fetchall():
+            # Convert row to a mutable dictionary
+            product_data = dict(row)
+            
+            # Deserialize JSON strings back to dicts
+            if product_data.get('store_location') and isinstance(product_data['store_location'], str):
+                product_data['store_location'] = json.loads(product_data['store_location'])
+            if product_data.get('other_properties') and isinstance(product_data['other_properties'], str):
+                product_data['other_properties'] = json.loads(product_data['other_properties'])
+                
+            product_list.append(SQLProduct(**product_data))
+        return product_list
 
     def filter_products_by_literals(
         self,
@@ -279,23 +313,46 @@ class SQLClient:
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # Handle price conversion from string (e.g., "105,272") to float
+        parsed_price = None
+        if product.price is not None:
+            try:
+                # Remove commas and convert to float
+                parsed_price = float(str(product.price).replace(",", ""))
+            except (ValueError, TypeError):
+                # Log or handle error if price cannot be parsed
+                parsed_price = None # Or raise an error
+
+        # Serialize dict fields to JSON strings
+        store_location_json = json.dumps(product.store_location) if product.store_location is not None else None
+        other_properties_json = json.dumps(product.other_properties) if product.other_properties is not None else None
+
         cursor.execute(
             """
             INSERT OR REPLACE INTO product_table
-            (product_id, store, category, subcategory, stock, price, size, prod_name, brand, descrption)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (product_id, prod_name, store, category, subcategory, brand, colour, description, dimensions, imageid, price, quantity, quantityunit, rating, size, stock, store_contact, store_location, other_properties)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 product.product_id,
+                product.prod_name,
                 product.store,
                 product.category,
                 product.subcategory,
-                product.stock,
-                product.price,
-                product.size,
-                product.prod_name,
                 product.brand,
-                product.descrption
+                product.colour,
+                product.description,
+                product.dimensions,
+                product.imageid,
+                parsed_price,  # Use parsed price
+                product.quantity,
+                product.quantityunit, # Corrected field name
+                product.rating,
+                product.size,
+                product.stock,
+                product.store_contact, # New field
+                store_location_json, # New field, JSON string
+                other_properties_json # New field, JSON string
             )
         )
 

@@ -31,14 +31,16 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 ATTRIBUTE_TO_RELATION = {
     "brand": "HAS_BRAND",
     "colour": "HAS_COLOR",
-    "store": "SOLD_BY"
+    "store": "SOLD_BY",
+    "gender": "FOR_GENDER"
 }
 
 # Mapping of attribute names to node types
 ATTR_TYPE_MAPPING = {
     "brand": "manufacturer",
     "store": "seller",
-    "colour": "colour"
+    "colour": "colour",
+    "gender": "gender"
 }
 
 
