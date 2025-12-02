@@ -4,77 +4,138 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Your Cart - BeeKurse</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
 </head>
-<body>
-    <div class="container">
-        <header>
-            <h1>Your Cart</h1>
-            <p class="item-count">{{ count }} item{% if count != 1 %}s{% endif %}</p>
-        </header>
+<body class="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-12 space-y-3">
+            <h1 class="text-5xl font-bold bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 bg-clip-text text-transparent">
+                Your Cart
+            </h1>
+            <p class="text-gray-600 text-lg">{{ count }} item{% if count != 1 %}s{% endif %} in your cart</p>
+        </div>
 
         {% if items %}
-        <div class="items-list">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {% for item in items %}
-            <div class="product-card">
-                <div class="product-image">
+            <div class="group bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 overflow-hidden border border-gray-100 hover:border-purple-200">
+                <div class="relative overflow-hidden bg-gradient-to-br from-gray-100 to-gray-50">
                     {% if item.image_url %}
-                    <img src="{{ item.image_url }}" alt="{{ item.prod_name }}" onerror="this.src='https://via.placeholder.com/120x120?text=No+Image'">
+                    <img src="{{ item.image_url }}" alt="{{ item.prod_name }}"
+                         class="w-full h-80 object-cover group-hover:scale-105 transition-transform duration-500"
+                         onerror="this.src='https://via.placeholder.com/400x320?text=No+Image'">
                     {% else %}
-                    <img src="https://via.placeholder.com/120x120?text=No+Image" alt="No image">
+                    <img src="https://via.placeholder.com/400x320?text=No+Image" alt="No image"
+                         class="w-full h-80 object-cover group-hover:scale-105 transition-transform duration-500">
                     {% endif %}
+                    <div class="absolute top-4 right-4 bg-white/90 backdrop-blur-sm px-4 py-2 rounded-full shadow-lg">
+                        <p class="text-2xl font-bold text-purple-600">₹{{ item.price or 'N/A' }}</p>
+                    </div>
                 </div>
-                <div class="product-details">
-                    <h2 class="product-name">{{ item.prod_name or 'Unknown Product' }}</h2>
-                    <div class="product-meta">
-                        {% if item.brand %}
-                        <p><span class="label">Brand:</span> {{ item.brand }}</p>
-                        {% endif %}
+
+                <div class="p-6 space-y-6">
+                    <div class="space-y-2">
+                        <div class="flex items-start justify-between gap-4">
+                            <h2 class="text-3xl font-bold text-gray-900 leading-tight">{{ item.prod_name or 'Unknown Product' }}</h2>
+                            {% if item.brand %}
+                            <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-purple-100 text-purple-700 text-sm font-medium whitespace-nowrap">
+                                <i data-lucide="sparkles" class="w-3 h-3"></i>
+                                {{ item.brand }}
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
+                            <div class="flex items-center gap-2 mb-2">
+                                <i data-lucide="package" class="w-4 h-4 text-indigo-600"></i>
+                                <p class="font-semibold text-gray-800 text-sm">Product ID</p>
+                            </div>
+                            <p class="text-lg font-bold text-indigo-600">{{ item.short_id or item.product_id }}</p>
+                        </div>
+
                         {% if item.colour %}
-                        <p><span class="label">Color:</span> {{ item.colour }}</p>
+                        <div class="bg-gradient-to-br from-pink-50 to-rose-50 rounded-xl p-4 border border-pink-100">
+                            <div class="flex items-center gap-2 mb-2">
+                                <i data-lucide="palette" class="w-4 h-4 text-pink-600"></i>
+                                <p class="font-semibold text-gray-800 text-sm">Color</p>
+                            </div>
+                            <span class="px-3 py-1 bg-white rounded-full text-sm font-medium text-gray-700 shadow-sm border border-pink-100">
+                                {{ item.colour }}
+                            </span>
+                        </div>
                         {% endif %}
+
                         {% if item.size %}
-                        <p><span class="label">Size:</span> {{ item.size }}</p>
+                        <div class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-100">
+                            <div class="flex items-center gap-2 mb-2">
+                                <i data-lucide="ruler" class="w-4 h-4 text-amber-600"></i>
+                                <p class="font-semibold text-gray-800 text-sm">Size</p>
+                            </div>
+                            <span class="px-3 py-1 bg-white rounded-full text-sm font-medium text-gray-700 shadow-sm border border-amber-100">
+                                {{ item.size }}
+                            </span>
+                        </div>
                         {% endif %}
                     </div>
-                    <p class="product-price">₹{{ item.price or 'N/A' }}</p>
-                    <p class="product-id">ID: {{ item.short_id or item.product_id }}</p>
-                </div>
-                <div class="product-actions">
-                    {% if whatsapp_number %}
-                    <a href="https://wa.me/{{ whatsapp_number }}?text=I%20want%20to%20buy%20{{ item.prod_name | urlencode }}%20(ID:%20{{ item.short_id }})"
-                       class="btn btn-buy" target="_blank">
-                        Buy Now
-                    </a>
-                    <a href="https://wa.me/{{ whatsapp_number }}?text=Tell%20me%20more%20about%20{{ item.short_id }}"
-                       class="btn btn-query" target="_blank">
-                        Ask Question
-                    </a>
+
+                    {% if item.description %}
+                    <div class="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-200">
+                        <p class="font-semibold text-gray-800 mb-2 text-sm">Description</p>
+                        <p class="text-gray-700 text-sm leading-relaxed whitespace-pre-line">{{ item.description }}</p>
+                    </div>
                     {% endif %}
-                    <button class="btn btn-remove" onclick="removeItem('{{ item.product_id }}')">
-                        Remove
-                    </button>
+
+                    <div class="flex flex-wrap gap-3 pt-2">
+                        {% if whatsapp_number %}
+                        <a href="https://wa.me/{{ whatsapp_number }}?text=I%20want%20to%20buy%20{{ item.prod_name | urlencode }}%20(ID:%20{{ item.short_id }})"
+                           class="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all duration-300 shadow-lg hover:shadow-xl"
+                           target="_blank">
+                            <i data-lucide="shopping-bag" class="w-5 h-5"></i>
+                            Buy Now
+                        </a>
+                        <a href="https://wa.me/{{ whatsapp_number }}?text=Tell%20me%20more%20about%20{{ item.short_id }}"
+                           class="flex-1 inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-semibold rounded-xl hover:from-purple-600 hover:to-indigo-700 transition-all duration-300 shadow-lg hover:shadow-xl"
+                           target="_blank">
+                            <i data-lucide="message-circle" class="w-5 h-5"></i>
+                            Ask Question
+                        </a>
+                        {% endif %}
+                        <button onclick="removeItem('{{ item.product_id }}')"
+                                class="inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-red-500 to-rose-600 text-white font-semibold rounded-xl hover:from-red-600 hover:to-rose-700 transition-all duration-300 shadow-lg hover:shadow-xl">
+                            <i data-lucide="trash-2" class="w-5 h-5"></i>
+                            Remove
+                        </button>
+                    </div>
                 </div>
             </div>
             {% endfor %}
         </div>
         {% else %}
-        <div class="empty-state">
-            <div class="empty-icon">🛒</div>
-            <h2>Your cart is empty</h2>
-            <p>Search for products on WhatsApp and add them to your cart!</p>
-            {% if whatsapp_number %}
-            <a href="https://wa.me/{{ whatsapp_number }}?text=Show%20me%20some%20products" class="btn btn-primary">
-                Start Shopping
-            </a>
-            {% endif %}
+        <div class="text-center py-20">
+            <div class="inline-block p-8 bg-white rounded-3xl shadow-xl border border-gray-100">
+                <div class="text-8xl mb-6">🛒</div>
+                <h2 class="text-3xl font-bold text-gray-800 mb-3">Your cart is empty</h2>
+                <p class="text-gray-600 text-lg mb-8">Search for products on WhatsApp and add them to your cart!</p>
+                {% if whatsapp_number %}
+                <a href="https://wa.me/{{ whatsapp_number }}?text=Show%20me%20some%20products"
+                   class="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all duration-300 shadow-lg hover:shadow-xl">
+                    <i data-lucide="shopping-bag" class="w-5 h-5"></i>
+                    Start Shopping
+                </a>
+                {% endif %}
+            </div>
         </div>
         {% endif %}
 
-        <footer>
-            <p>Powered by BeeKurse</p>
+        <footer class="mt-16 text-center space-y-4">
+            <p class="text-gray-500">Powered by BeeKurse</p>
             {% if whatsapp_number %}
-            <a href="https://wa.me/{{ whatsapp_number }}" class="whatsapp-link">
+            <a href="https://wa.me/{{ whatsapp_number }}"
+               class="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold rounded-xl hover:from-green-600 hover:to-emerald-700 transition-all duration-300 shadow-lg hover:shadow-xl">
+                <i data-lucide="message-circle" class="w-5 h-5"></i>
                 Back to WhatsApp
             </a>
             {% endif %}
@@ -82,6 +143,8 @@
     </div>
 
     <script>
+        lucide.createIcons();
+
         const userId = "{{ user_id }}";
 
         async function removeItem(productId) {

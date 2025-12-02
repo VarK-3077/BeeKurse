@@ -36,6 +36,8 @@ Thumbs.db
 
 # Data (managed separately)
 data/databases/
+data/
+transformed_products/
 
 # Dump folder (local backup only)
 dump/
