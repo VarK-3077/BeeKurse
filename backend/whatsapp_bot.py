@@ -2,7 +2,10 @@
 import os
 import json
 import requests
+import tempfile
+import uuid
 from pathlib import Path
+from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from dotenv import load_dotenv
@@ -24,6 +27,10 @@ PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")       # e.g. "1234567890
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_verify_token_123")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5001/process")
 VENDOR_BACKEND_URL = os.getenv("VENDOR_BACKEND_URL", "http://localhost:5001/vendor/process")
+
+# Directory for downloaded vendor images
+VENDOR_IMAGE_DIR = Path(__file__).parent.parent / "data" / "vendor_data" / "uploads"
+VENDOR_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Registry paths
 BASE_DIR = Path(__file__).parent.parent.absolute()
@@ -67,9 +74,21 @@ def is_registered_user(phone: str) -> bool:
 GRAPH_API_BASE = "https://graph.facebook.com/v20.0"
 
 
-def send_whatsapp_text_message(to_number: str, message: str):
+def send_whatsapp_text_message(
+    to_number: str,
+    message: str,
+    reply_to_message_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Send a text message to a WhatsApp user using the Cloud API.
+
+    Args:
+        to_number: Recipient phone number
+        message: Message text
+        reply_to_message_id: Optional - ID of message to reply to (for threading)
+
+    Returns:
+        Dict with response data, including 'sent_message_id' on success
     """
     if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
         print("❌ Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID in environment.")
@@ -90,6 +109,10 @@ def send_whatsapp_text_message(to_number: str, message: str):
         }
     }
 
+    # Add context for reply-to threading
+    if reply_to_message_id:
+        payload["context"] = {"message_id": reply_to_message_id}
+
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
     except Exception as e:
@@ -101,7 +124,13 @@ def send_whatsapp_text_message(to_number: str, message: str):
     else:
         print("✅ Message sent to WhatsApp:", resp.text)
 
-    return resp.json() if resp.content else {}
+    result = resp.json() if resp.content else {}
+
+    # Extract and return sent message ID for tracking
+    if result.get("messages"):
+        result["sent_message_id"] = result["messages"][0].get("id")
+
+    return result
 
 # -------------------------------------- Image Add ------------------------------------
 def send_whatsapp_image_message(to_number: str, image_url: str, caption: str = ""):
@@ -143,6 +172,58 @@ def send_whatsapp_image_message(to_number: str, image_url: str, caption: str = "
         print("📸 Image sent to WhatsApp:", resp.text)
 
     return resp.json() if resp.content else {}
+
+# ----------------------------------------------------------------------------------
+
+
+# ---------------------------------- Download WhatsApp Media ---------------------------
+def download_whatsapp_media(media_id: str) -> str:
+    """
+    Download media from WhatsApp Cloud API.
+    Returns the local file path where the image was saved.
+    """
+    if not WHATSAPP_TOKEN:
+        raise ValueError("WHATSAPP_TOKEN not set")
+
+    # Step 1: Get media URL from media ID
+    media_url_endpoint = f"{GRAPH_API_BASE}/{media_id}"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+
+    try:
+        resp = requests.get(media_url_endpoint, headers=headers, timeout=30)
+        resp.raise_for_status()
+        media_info = resp.json()
+        download_url = media_info.get("url")
+
+        if not download_url:
+            raise ValueError(f"No download URL in media response: {media_info}")
+
+        # Step 2: Download the actual media file
+        media_resp = requests.get(download_url, headers=headers, timeout=60)
+        media_resp.raise_for_status()
+
+        # Determine file extension from content type
+        content_type = media_resp.headers.get("Content-Type", "image/jpeg")
+        ext = ".jpg"
+        if "png" in content_type:
+            ext = ".png"
+        elif "webp" in content_type:
+            ext = ".webp"
+
+        # Save to vendor uploads directory
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = VENDOR_IMAGE_DIR / filename
+
+        with open(filepath, "wb") as f:
+            f.write(media_resp.content)
+
+        print(f"📥 Downloaded media to: {filepath}")
+        return str(filepath)
+
+    except Exception as e:
+        print(f"❌ Error downloading media {media_id}: {e}")
+        raise
+
 
 # ----------------------------------------------------------------------------------
 
@@ -256,24 +337,89 @@ async def receive_webhook(request: Request):
         from_number = message["from"]                 # The user's WhatsApp number
         msg_type = message.get("type", "text")
 
-        # Only handle text messages
-        if msg_type != "text":
-            send_whatsapp_text_message(
-                from_number,
-                "Sorry, I only understand text messages right now."
-            )
-            return JSONResponse({"status": "unsupported_type"}, status_code=200)
-
-        # Get raw user text (before short ID resolution)
-        raw_user_text = message["text"]["body"]
-        print(f"📩 Incoming message from {from_number}: {raw_user_text}")
+        # ===== Extract Message Context for Reply Tracking =====
+        incoming_message_id = message.get("id")  # This message's WhatsApp ID
+        context_message_id = None
+        if "context" in message:
+            # User quoted/replied to a previous message
+            context_message_id = message["context"].get("id")
+            print(f"📎 Reply to message: {context_message_id}")
 
         # ===== Determine User Type: Vendor, User, or New User =====
         is_vendor = is_registered_vendor(from_number)
         is_user = is_registered_user(from_number)
 
-        # ===== VENDOR FLOW =====
+        # ===== VENDOR FLOW (handles both text and images) =====
         if is_vendor:
+            print(f"🏪 VENDOR detected: {from_number}")
+
+            raw_user_text = ""
+            attachments = []
+
+            # Handle different message types for vendors
+            if msg_type == "text":
+                raw_user_text = message["text"]["body"]
+                print(f"📩 Vendor text message: {raw_user_text}")
+
+            elif msg_type == "image":
+                # Download the image from WhatsApp
+                image_info = message.get("image", {})
+                media_id = image_info.get("id")
+                caption = image_info.get("caption", "")
+
+                if media_id:
+                    try:
+                        local_path = download_whatsapp_media(media_id)
+                        attachments.append({
+                            "type": "image",
+                            "path": local_path,
+                            "media_id": media_id,
+                            "mime_type": image_info.get("mime_type", "image/jpeg")
+                        })
+                        raw_user_text = caption  # Use caption as text if provided
+                        print(f"📸 Vendor image received, saved to: {local_path}")
+                    except Exception as e:
+                        print(f"❌ Failed to download vendor image: {e}")
+                        send_whatsapp_text_message(
+                            from_number,
+                            "Failed to process your image. Please try again."
+                        )
+                        return JSONResponse({"status": "image_download_error"}, status_code=200)
+
+            elif msg_type == "document":
+                # Handle document (PDF, etc.)
+                doc_info = message.get("document", {})
+                media_id = doc_info.get("id")
+                caption = doc_info.get("caption", "")
+
+                if media_id:
+                    try:
+                        local_path = download_whatsapp_media(media_id)
+                        attachments.append({
+                            "type": "document",
+                            "path": local_path,
+                            "media_id": media_id,
+                            "mime_type": doc_info.get("mime_type", "application/pdf"),
+                            "filename": doc_info.get("filename", "document")
+                        })
+                        raw_user_text = caption
+                        print(f"📄 Vendor document received, saved to: {local_path}")
+                    except Exception as e:
+                        print(f"❌ Failed to download vendor document: {e}")
+                        send_whatsapp_text_message(
+                            from_number,
+                            "Failed to process your document. Please try again."
+                        )
+                        return JSONResponse({"status": "document_download_error"}, status_code=200)
+
+            else:
+                send_whatsapp_text_message(
+                    from_number,
+                    f"Unsupported message type: {msg_type}. Please send text, images, or documents."
+                )
+                return JSONResponse({"status": "unsupported_vendor_type"}, status_code=200)
+
+            # Route to vendor backend with attachments and context
             print(f"🏪 Routing to VENDOR backend for {from_number}")
             try:
                 backend_resp = requests.post(
@@ -281,9 +427,11 @@ async def receive_webhook(request: Request):
                     json={
                         "sender": from_number,
                         "message": raw_user_text,
-                        "attachments": []
+                        "attachments": attachments,
+                        "context_id": context_message_id,  # ID of message being replied to
+                        "incoming_message_id": incoming_message_id  # This message's ID
                     },
-                    timeout=30
+                    timeout=120  # Longer timeout for OCR processing
                 )
                 backend_resp.raise_for_status()
                 backend_data = backend_resp.json()
@@ -297,16 +445,52 @@ async def receive_webhook(request: Request):
 
             # Handle vendor response (usually {"messages": [...]})
             if "messages" in backend_data:
+                multi_tracking = backend_data.get("multi_product_tracking", False)
+                message_mappings = {}
+
                 for msg in backend_data["messages"]:
-                    if msg["type"] == "image":
+                    if msg.get("type") == "image":
                         send_whatsapp_image_message(from_number, msg["url"], caption="")
-                    elif msg["type"] == "text":
-                        send_whatsapp_text_message(from_number, msg["text"])
+                    elif msg.get("type") == "text":
+                        result = send_whatsapp_text_message(from_number, msg["text"])
+
+                        # Track message IDs for multi-product reply handling
+                        if multi_tracking and msg.get("requires_reply_tracking"):
+                            sent_wamid = result.get("sent_message_id")
+                            product_index = msg.get("product_index")
+                            if sent_wamid and product_index is not None:
+                                message_mappings[sent_wamid] = product_index
+                                print(f"📍 Mapped message {sent_wamid[:20]}... -> product {product_index}")
+
+                # Register message ID mappings with vendor backend
+                if message_mappings:
+                    try:
+                        requests.post(
+                            f"{VENDOR_BACKEND_URL}/register-message-ids",
+                            json={"user_id": from_number, "mappings": message_mappings},
+                            timeout=10
+                        )
+                        print(f"📍 Registered {len(message_mappings)} message mappings")
+                    except Exception as e:
+                        print(f"⚠️ Failed to register message mappings: {e}")
+
             elif "reply" in backend_data:
                 send_whatsapp_text_message(from_number, backend_data["reply"])
 
             return JSONResponse({"status": "vendor_handled"}, status_code=200)
         # ===== END VENDOR FLOW =====
+
+        # ===== USER FLOW - Only text messages =====
+        if msg_type != "text":
+            send_whatsapp_text_message(
+                from_number,
+                "Sorry, I only understand text messages right now."
+            )
+            return JSONResponse({"status": "unsupported_type"}, status_code=200)
+
+        # Get raw user text (before short ID resolution)
+        raw_user_text = message["text"]["body"]
+        print(f"📩 Incoming message from {from_number}: {raw_user_text}")
 
         # ===== USER FLOW (existing user or new user - new users default to user onboarding) =====
         # Note: If not a vendor and not an existing user, they're a new user (default)

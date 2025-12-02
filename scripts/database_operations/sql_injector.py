@@ -1,6 +1,8 @@
 import os
 import json
 import sqlite3
+import random
+import string
 from typing import Any, Dict, Union, Optional
 import csv
 
@@ -17,8 +19,14 @@ CONTACTS_TABLE_NAME = "store_contacts"
 REQUIRED_FIELDS = [
     'brand', 'category', 'colour', 'descrption', 'dimensions', 'imageid',
     'price', 'prod_name', 'product_id', 'quantity', 'qunatityunit',
-    'rating', 'size', 'stock', 'store', 'subcategory', 'subcategoryid'
+    'rating', 'size', 'stock', 'store', 'subcategory', 'subcategoryid', 'short_id'
 ]
+
+
+def generate_short_id(length: int = 4) -> str:
+    """Generate a unique short ID (e.g., A1B2) for WhatsApp references."""
+    chars = string.ascii_uppercase + string.digits
+    return ''.join(random.choices(chars, k=length))
 
 def add_subcategory_embedding_and_save(
     product_json: Union[Dict[str, Any], str],
@@ -46,6 +54,10 @@ def add_subcategory_embedding_and_save(
     subcat = raw.get("subcategory")
     if not subcat:
         raise ValueError("Input JSON must contain a non-empty 'subcategory' field")
+
+    # ---- Generate short_id if not provided ----
+    if not raw.get("short_id"):
+        raw["short_id"] = generate_short_id()
 
     # ---- Load / reuse SentenceTransformer model ----
     global _ST_MODEL

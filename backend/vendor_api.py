@@ -19,7 +19,10 @@ import json
 import sys
 sys.path.append("../test_debug")
 
-from sql_injector import add_subcategory_embedding_and_save
+from scripts.database_operations.sql_injector import add_subcategory_embedding_and_save
+from config.config import Config
+
+config = Config
 # ---------------------------------------------------------
 
 
@@ -414,6 +417,14 @@ async def upload_files(
     product_id = f"PID-{str(uuid.uuid4())}"
 
     # Prepare complete product data
+    # Build description with optional fields
+    desc_parts = [product.description or ""]
+    if product.care_instructions:
+        desc_parts.append(f"care instruction: {product.care_instructions}")
+    if product.materials:
+        desc_parts.append(f"materials: {product.materials}")
+    full_description = " | ".join(p for p in desc_parts if p)
+
     complete_product = {
         "product_id": product_id,
         "prod_name": product.name,
@@ -425,19 +436,25 @@ async def upload_files(
         "dimensions": product.dimensions or "",
         "brand": product.brand or "",
         "colour": product.colors[0] if product.colors else "",
-        "descrption": product.description + " | care instruction: " + product.care_instructions + " | materials: " + product.materials or "",
+        "descrption": full_description,
         "category": product.category,
         "imageid": image_files[0] if image_files else "",
         "subcategory": product.subcategory or "none",
         "rating": 0,
         "stock": product.stock,
-        # "materials": product.materials or "",
-        # "care_instructions": product.care_instructions or "",
-        # "vendor_username": current_user.username,
-        # "created_at": datetime.utcnow().isoformat()
     }
 
-    add_subcategory_embedding_and_save(complete_product)
+    # Determine which database to use
+    if config.USE_VENDOR_TEST_DB:
+        db_path = config.VENDOR_TEST_DB_PATH
+        print(f"🧪 Saving product to VENDOR TEST database: {db_path}")
+    else:
+        db_path = config.SQL_DB_PATH
+        print(f"📦 Saving product to MAIN database: {db_path}")
+
+    # Save to SQL database with embeddings
+    saved_row = add_subcategory_embedding_and_save(complete_product, db_path=db_path)
+    complete_product["short_id"] = saved_row.get("short_id")
 
     # Save product to JSON server
     try:
@@ -535,3 +552,60 @@ async def get_vendor_by_username(
         is_active=vendor.is_active,
         created_at=vendor.created_at or datetime.utcnow()
     )
+
+
+@app.get("/products/me")
+async def get_my_products(
+    current_user: Annotated[User, Depends(get_current_active_user)]
+):
+    """Get all products for the current vendor from the database"""
+    import sqlite3
+
+    # Determine which database to use
+    if config.USE_VENDOR_TEST_DB:
+        db_path = config.VENDOR_TEST_DB_PATH
+    else:
+        db_path = config.SQL_DB_PATH
+
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Get products by store (business_name)
+        cursor.execute(
+            "SELECT * FROM product_table WHERE store = ?",
+            (current_user.business_name,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        products = []
+        for row in rows:
+            product = dict(row)
+            # Remove embedding data from response (it's large)
+            if 'subcategoryid' in product:
+                del product['subcategoryid']
+            products.append(product)
+
+        return {"products": products, "total": len(products)}
+    except Exception as e:
+        print(f"Error fetching products: {e}")
+        return {"products": [], "total": 0, "error": str(e)}
+
+
+# Development server
+if __name__ == "__main__":
+    import uvicorn
+    print("\n" + "="*80)
+    print("🏪 Starting Vendor API Server")
+    print("="*80)
+    print(f"📍 API endpoint: http://0.0.0.0:8000")
+    print(f"📦 Test DB enabled: {config.USE_VENDOR_TEST_DB}")
+    if config.USE_VENDOR_TEST_DB:
+        print(f"🧪 Using database: {config.VENDOR_TEST_DB_PATH}")
+    else:
+        print(f"📊 Using database: {config.SQL_DB_PATH}")
+    print("="*80 + "\n")
+
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

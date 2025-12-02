@@ -170,23 +170,23 @@ class Config:
         str(BASE_DIR / "data" / "vendor_data" / "vendor_registry.json")
     )
 
-    # Session handling
+    # Session handling (timeout in seconds for vendor confirmation loops)
     VENDOR_SESSION_LOCK_SECONDS: int = int(
-        os.getenv("VENDOR_SESSION_LOCK_SECONDS", "45")
+        os.getenv("VENDOR_SESSION_LOCK_SECONDS", "120")  # 2 minutes default
     )
     VENDOR_SESSION_LOCK_MAX_SECONDS: int = int(
-        os.getenv("VENDOR_SESSION_LOCK_MAX_SECONDS", "60")
+        os.getenv("VENDOR_SESSION_LOCK_MAX_SECONDS", "180")  # 3 minutes max
     )
     VENDOR_SESSION_LOCK_MIN_SECONDS: int = int(
-        os.getenv("VENDOR_SESSION_LOCK_MIN_SECONDS", "30")
+        os.getenv("VENDOR_SESSION_LOCK_MIN_SECONDS", "60")  # 1 minute min
     )
 
-    # Similarity thresholds
+    # Similarity thresholds (higher = stricter matching)
     VENDOR_SIMILARITY_THRESHOLD: float = float(
-        os.getenv("VENDOR_SIMILARITY_THRESHOLD", "0.82")
+        os.getenv("VENDOR_SIMILARITY_THRESHOLD", "0.90")  # For duplicate detection when adding
     )
     VENDOR_UPDATE_MIN_SIMILARITY: float = float(
-        os.getenv("VENDOR_UPDATE_MIN_SIMILARITY", "0.65")
+        os.getenv("VENDOR_UPDATE_MIN_SIMILARITY", "0.75")  # Min similarity to suggest update match
     )
 
     # Intake queue

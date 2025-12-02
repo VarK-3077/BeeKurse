@@ -70,6 +70,8 @@ class VendorMessage(BaseModel):
     sender: str
     message: str
     attachments: Optional[List[Dict[str, Any]]] = None
+    context_id: Optional[str] = None  # ID of message being replied to (for multi-product tracking)
+    incoming_message_id: Optional[str] = None  # This message's WhatsApp ID
 
 # ---------------------------------- Image Add ---------------------------------------------------
 def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestrator, sql_client: SQLClient) -> Dict[str, Any]:
@@ -414,10 +416,20 @@ def process_vendor_message(payload: VendorMessage):
         user_phone = payload.sender
         user_message = payload.message
         attachments = payload.attachments or []
+        context_id = payload.context_id  # ID of message being replied to
+        incoming_message_id = payload.incoming_message_id  # This message's ID
 
         print(f"\n📦 Vendor intake from [{user_phone}]: {user_message}")
+        if context_id:
+            print(f"📎 Replying to message: {context_id}")
 
-        reply = vendor_flow.handle(user_phone, user_message, attachments=attachments)
+        reply = vendor_flow.handle(
+            user_phone,
+            user_message,
+            attachments=attachments,
+            reply_context_id=context_id,
+            incoming_message_id=incoming_message_id
+        )
 
         return reply
 
@@ -437,6 +449,28 @@ def process_vendor_message(payload: VendorMessage):
                 }
             ]
         }
+
+
+@app.post("/vendor/register-message-ids")
+def register_message_ids(payload: Dict[str, Any]):
+    """
+    Register WhatsApp message IDs for multi-product reply tracking.
+    Called by whatsapp_bot after sending product messages.
+    """
+    user_id = payload.get("user_id")
+    mappings = payload.get("mappings", {})  # {wamid: product_index}
+
+    if not user_id or not mappings:
+        return {"status": "error", "detail": "Missing user_id or mappings"}
+
+    session = vendor_flow.sessions.get(user_id)
+    if session:
+        for wamid, product_index in mappings.items():
+            session.product_message_map[wamid] = product_index
+        print(f"📍 Registered {len(mappings)} message mappings for {user_id}")
+        return {"status": "ok", "count": len(mappings)}
+
+    return {"status": "warning", "detail": "Session not found"}
 
 
 # Development server
