@@ -3,7 +3,12 @@ Configuration for Kurse Ecommerce Search Orchestrator - Test & Debug Version
 """
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal envs
+    def load_dotenv():
+        return None
 
 # Load environment variables from .env file
 load_dotenv()
@@ -147,6 +152,52 @@ class Config:
 
     DEBUG: bool = os.getenv("DEBUG", "True").lower() == "true"
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+
+    # ===== Vendor / Nunchi Flow Settings =====
+
+    # Vendor data directory (mirrors user_data structure)
+    VENDOR_DATA_DIR: str = os.getenv(
+        "VENDOR_DATA_DIR",
+        str(BASE_DIR / "data" / "vendor_data")
+    )
+
+    # Registration
+    VENDOR_REGISTRATION_URL: str = os.getenv(
+        "VENDOR_REGISTRATION_URL", "https://vendor.example.com/register"
+    )
+    VENDOR_REGISTRY_FILE: str = os.getenv(
+        "VENDOR_REGISTRY_FILE",
+        str(BASE_DIR / "data" / "vendor_data" / "vendor_registry.json")
+    )
+
+    # Session handling
+    VENDOR_SESSION_LOCK_SECONDS: int = int(
+        os.getenv("VENDOR_SESSION_LOCK_SECONDS", "45")
+    )
+    VENDOR_SESSION_LOCK_MAX_SECONDS: int = int(
+        os.getenv("VENDOR_SESSION_LOCK_MAX_SECONDS", "60")
+    )
+    VENDOR_SESSION_LOCK_MIN_SECONDS: int = int(
+        os.getenv("VENDOR_SESSION_LOCK_MIN_SECONDS", "30")
+    )
+
+    # Similarity thresholds
+    VENDOR_SIMILARITY_THRESHOLD: float = float(
+        os.getenv("VENDOR_SIMILARITY_THRESHOLD", "0.82")
+    )
+    VENDOR_UPDATE_MIN_SIMILARITY: float = float(
+        os.getenv("VENDOR_UPDATE_MIN_SIMILARITY", "0.65")
+    )
+
+    # Intake queue
+    INTAKE_QUEUE_TABLE: str = os.getenv("INTAKE_QUEUE_TABLE", "intake_queue")
+
+    # Vendor Test Database (separate from main inventory for testing)
+    VENDOR_TEST_DB_PATH: str = os.getenv(
+        "VENDOR_TEST_DB_PATH",
+        str(BASE_DIR / "data" / "databases" / "sql" / "vendor_test.db")
+    )
+    USE_VENDOR_TEST_DB: bool = os.getenv("USE_VENDOR_TEST_DB", "True").lower() == "true"
 
 
 # Singleton instance
