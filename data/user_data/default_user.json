@@ -1,0 +1,13 @@
+{
+  "user_id": "default_user",
+  "profile": {
+    "name": "Test User",
+    "preferences": {
+      "style": [],
+      "brands": [],
+      "sizes": {},
+      "colors": []
+    }
+  },
+  "purchase_history": []
+}

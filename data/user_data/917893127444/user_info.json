@@ -1,0 +1,14 @@
+{
+  "user_id": "917893127444",
+  "phone_number": "917893127444",
+  "created_at": "2025-12-02T01:23:52.004290",
+  "onboarding_state": "completed",
+  "onboarding_completed": true,
+  "data_collection_consent": true,
+  "usage_data_consent": true,
+  "gender_preference": "male",
+  "age_range": "18-25",
+  "clothing_size": "M",
+  "last_active": "2025-12-02T15:37:42.479021",
+  "message_count": 37
+}

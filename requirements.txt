@@ -34,9 +34,9 @@ safetensors==0.6.2
 tokenizers==0.22.1
 
 # LangChain Integration
-langchain-core==0.3.79
-langchain-huggingface==1.0.1
-langchain-nvidia-ai-endpoints==0.3.19
+langchain-core
+langchain-huggingface
+langchain-nvidia-ai-endpoints
 
 # Development & Testing Tools
 pyngrok==7.4.1

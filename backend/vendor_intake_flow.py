@@ -37,6 +37,22 @@ def _clean_text(text: str) -> str:
     return (text or "").strip()
 
 
+def _extract_name(text: str, mode: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+
+    cleaned = text.strip()
+    if mode in {"add", "update"}:
+        cleaned = re.sub(r"^(add|update)\b[:\- ]*", "", cleaned, flags=re.IGNORECASE).strip()
+
+    # Strip trailing fields like price/quantity/stock hints to keep only the product name
+    keyword_match = re.search(r"\b(price|cost|mrp|qty|quantity|stock)\b", cleaned, re.IGNORECASE)
+    if keyword_match:
+        cleaned = cleaned[: keyword_match.start()].strip()
+
+    return cleaned or None
+
+
 def _extract_price(text: str) -> Optional[float]:
     match = re.search(r"(?:rs\.?|inr|₹)?\s*(\d+(?:\.\d{1,2})?)", text, re.IGNORECASE)
     if match:
@@ -277,7 +293,7 @@ class VendorIntakeFlow:
         self, message: str, attachments: List[Dict[str, Any]], session: SessionState
     ) -> Tuple[Dict[str, Any], List[str]]:
         text = _clean_text(message)
-        name_candidate = text.split("\n")[0] if text else None
+        name_candidate = _extract_name(text.split("\n")[0] if text else "", session.mode)
         price = _extract_price(text)
         quantity = _extract_integer(text)
         stock = _extract_integer(text)
@@ -413,4 +429,3 @@ class VendorIntakeFlow:
                 {"type": "text", "text": thanks},
             ]
         }
-
