@@ -3,9 +3,10 @@ User Management Module for BeeKurse WhatsApp Backend
 Handles user registration, onboarding, and profile management
 """
 import os
+import re
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass, asdict, field
@@ -44,7 +45,7 @@ class UserInfo:
     # Onboarding answers (nullable if opted out)
     gender_preference: Optional[str] = None          # "male", "female", "both"
     age_range: Optional[str] = None                  # "under_18", "18-25", "26-35", "36-50", "50+"
-    clothing_size: Optional[str] = None              # "XS", "S", "M", "L", "XL", "XXL", None (skipped)
+    clothing_sizes: Optional[List[str]] = None       # ["M", "L"] - list of acceptable sizes
 
     # Metadata
     last_active: Optional[str] = None
@@ -111,25 +112,21 @@ class OnboardingConfig:
         },
         OnboardingState.AWAITING_SIZE: {
             "question": (
-                "Almost done! Q3/3: What's your typical clothing size?\n"
-                "1. XS\n"
-                "2. S\n"
-                "3. M\n"
-                "4. L\n"
-                "5. XL\n"
-                "6. XXL\n"
-                "7. Skip this one"
+                "Almost done! Q3/3: What clothing sizes do you wear?\n"
+                "You can pick multiple (e.g., '3,4' or 'M,L'):\n"
+                "1. XS  2. S  3. M  4. L  5. XL  6. XXL  7. Skip"
             ),
-            "valid_responses": {
+            "multi_select": True,  # Allow multiple size selections
+            "size_map": {
                 "1": "XS", "xs": "XS",
                 "2": "S", "s": "S", "small": "S",
                 "3": "M", "m": "M", "medium": "M",
                 "4": "L", "l": "L", "large": "L",
-                "5": "XL", "xl": "XL", "extra large": "XL",
+                "5": "XL", "xl": "XL",
                 "6": "XXL", "xxl": "XXL", "2xl": "XXL",
                 "7": None, "skip": None, "later": None, "no": None
             },
-            "field": "clothing_size",
+            "field": "clothing_sizes",
             "next_state": OnboardingState.AWAITING_USAGE_CONSENT
         },
         OnboardingState.AWAITING_USAGE_CONSENT: {
@@ -323,6 +320,31 @@ class UserManager:
             return OnboardingConfig.QUESTIONS[state]["question"]
         return OnboardingConfig.COMPLETION_MESSAGE
 
+    def _parse_multi_select_sizes(self, text: str, size_map: Dict[str, str]) -> Optional[List[str]]:
+        """
+        Parse multi-select size input like '3,4' or 'M,L' or 'M L'.
+        Returns list of sizes or None if skip/invalid.
+        """
+        # Check for skip first
+        if text in ("7", "skip", "later", "no"):
+            return []  # Empty list = skipped
+
+        # Split by comma, space, or 'and'
+        parts = re.split(r'[,\s]+|and', text)
+        parts = [p.strip() for p in parts if p.strip()]
+
+        if not parts:
+            return None
+
+        sizes = []
+        for part in parts:
+            size = size_map.get(part.lower())
+            if size and size not in sizes:
+                sizes.append(size)
+
+        # Return None if no valid sizes found
+        return sizes if sizes else None
+
     def _process_onboarding(self, user_info: UserInfo, message_text: str) -> str:
         """Process onboarding response and return next question"""
         current_state = OnboardingState(user_info.onboarding_state)
@@ -338,16 +360,24 @@ class UserManager:
         config = OnboardingConfig.QUESTIONS[current_state]
         normalized = message_text.strip().lower()
 
-        # Try to match response
-        answer = config["valid_responses"].get(normalized)
+        # Handle multi-select (for sizes)
+        if config.get("multi_select"):
+            answer = self._parse_multi_select_sizes(normalized, config.get("size_map", {}))
+            if answer is None:
+                return (
+                    "I didn't quite get that. Please choose from the options:\n\n"
+                    + config["question"]
+                )
+        else:
+            # Try to match response
+            answer = config.get("valid_responses", {}).get(normalized)
 
-        # If no exact match found, check if it's an invalid response
-        if answer is None and normalized not in config["valid_responses"]:
-            # Invalid response - repeat question
-            return (
-                "I didn't quite get that. Please choose from the options:\n\n"
-                + config["question"]
-            )
+            # If no exact match found, check if it's an invalid response
+            if answer is None and normalized not in config.get("valid_responses", {}):
+                return (
+                    "I didn't quite get that. Please choose from the options:\n\n"
+                    + config["question"]
+                )
 
         # Store answer
         field_name = config["field"]

@@ -103,12 +103,15 @@ class Config:
     LINEAR_PENALTY_RATE: float = 0.1    # Penalty per 10% buffer violation
 
     # Minimum Score Threshold
-    MIN_SCORE_THRESHOLD: float = 0.0    # Filter products below this score
+    MIN_SCORE_THRESHOLD: float = 0.3    # Filter products below this score (was 0.0)
 
     # Subcategory Scoring Parameters
     ENABLE_SUBCATEGORY_SCORING: bool = True  # Enable subcategory similarity scoring
     SUBCATEGORY_THRESHOLD: float = 0.5       # Minimum similarity for bonus
     SUBCATEGORY_MAX_BONUS: float = 0.4       # Maximum bonus score (at similarity=1.0)
+
+    # Relevance Filtering (for "no results" handling)
+    SUBCATEGORY_RELEVANCE_THRESHOLD: float = 0.5  # Minimum subcategory similarity for relevance
 
 
     # ===== VDB Query Parameters =====

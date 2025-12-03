@@ -21,6 +21,7 @@ from search_agent.scoring.subcategory_scorer import SubcategoryScorer
 from search_agent.scoring.score_combiner import ScoreCombiner
 from search_agent.orchestrator.detail_service import ProductDetailService
 from search_agent.orchestrator.chat_handler import ChatHandler
+from search_agent.strontium.user_filter import get_user_filter_manager
 from config.config import Config
 import numpy as np
 
@@ -72,12 +73,13 @@ class SearchOrchestrator:
         # Initialize chat handler
         self.chat_handler = ChatHandler()
 
-    def search(self, query: SearchQuery) -> SearchResult:
+    def search(self, query: SearchQuery, user_id: str = None) -> SearchResult:
         """
         Execute unified search
 
         Args:
             query: SearchQuery object with all search parameters
+            user_id: Optional user ID for personalized filtering (e.g., gender)
 
         Returns:
             SearchResult with ranked product IDs
@@ -115,6 +117,14 @@ class SearchOrchestrator:
         # STEP 2: Parallel Property Search (RQ) + Connected Search (SQ)
         property_scores, connected_scores = self._parallel_retrieval(query)
 
+        # Check if we got any results from property search
+        if not property_scores:
+            return SearchResult(
+                product_ids=[],
+                no_relevant_results=True,
+                filter_reason="no_matches"
+            )
+
         # STEP 3: Subcategory Scoring (if enabled)
         subcategory_scores = {}
         if config.ENABLE_SUBCATEGORY_SCORING and property_scores:
@@ -128,23 +138,40 @@ class SearchOrchestrator:
                 target_embedding=target_subcat_embedding
             )
 
-        # STEP 4: Combine, Score & Rank
-        ranked_product_ids = self.score_combiner.combine_and_rank(
+        # Get gender filter if user_id provided
+        gender_filter = None
+        if user_id:
+            user_filter = get_user_filter_manager()
+            gender_pref = user_filter.get_gender_preference(user_id)
+            if gender_pref:
+                gender_filter = (gender_pref, query.product_category)
+
+        # STEP 4: Combine, Score & Rank (with gender filtering)
+        ranked_product_ids, filter_reason = self.score_combiner.combine_and_rank(
             property_scores=property_scores,
             connected_scores=connected_scores,
-            subcategory_scores=subcategory_scores if subcategory_scores else None
+            subcategory_scores=subcategory_scores if subcategory_scores else None,
+            gender_filter=gender_filter
         )
 
         # STEP 5: Re-rank by literal field if sort_literal is specified (for superlatives)
-        if query.sort_literal:
+        if query.sort_literal and ranked_product_ids:
             ranked_product_ids = self.score_combiner.rank_by_literal(
                 product_ids=ranked_product_ids,
                 sort_literal=query.sort_literal
             )
 
+        # Check for no results after filtering
+        if not ranked_product_ids:
+            return SearchResult(
+                product_ids=[],
+                no_relevant_results=True,
+                filter_reason=filter_reason or "no_matches"
+            )
+
         return SearchResult(product_ids=ranked_product_ids)
 
-    def search_strontium(self, strontium_output: dict) -> List[SearchResult]:
+    def search_strontium(self, strontium_output: dict, user_id: str = None) -> List[SearchResult]:
         """
         Execute search with Strontium output format
 
@@ -166,6 +193,7 @@ class SearchOrchestrator:
                         ...
                     ]
                 }
+            user_id: Optional user ID for personalized filtering (e.g., gender)
 
         Returns:
             List of SearchResult objects (one per product query)
@@ -184,8 +212,8 @@ class SearchOrchestrator:
             # Create SearchQuery from Strontium product format
             query = SearchQuery(**product_query_dict)
 
-            # Execute search
-            result = self.search(query)
+            # Execute search with user_id for personalized filtering
+            result = self.search(query, user_id=user_id)
             results.append(result)
 
         return results

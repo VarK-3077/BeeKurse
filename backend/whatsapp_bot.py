@@ -16,6 +16,9 @@ from .user_manager import get_user_manager
 # Cart management
 from .cart_manager import get_cart_manager
 
+# Message history for contextual replies
+from .message_history import get_message_history
+
 # Load variables from .env file
 load_dotenv()
 
@@ -528,8 +531,10 @@ async def receive_webhook(request: Request):
             backend_resp = requests.post(
                 BACKEND_URL,
                 json={
-                    "sender": from_number,   # <- IMPORTANT: matches backend_strontium.py
-                    "message": user_text
+                    "sender": from_number,
+                    "message": user_text,
+                    "context_message_id": context_message_id,  # ID of message being replied to
+                    "incoming_message_id": incoming_message_id  # This message's ID
                 },
                 timeout=30
             )
@@ -547,21 +552,30 @@ async def receive_webhook(request: Request):
 
         print(backend_data)
 
-        # Format 1: Search response - {"text": str, "images": list}
+        # Get message history manager for tracking
+        message_history = get_message_history()
+
+        # Format 1: Search response - {"text": str, "images": list, "product_ids": list}
         if "text" in backend_data or "images" in backend_data:
             text = backend_data.get("text")
             images = backend_data.get("images", [])
+            product_ids = backend_data.get("product_ids", [])
 
-            # 1. Send images first (each image is a separate WhatsApp message)
-            print("ALIVE")
+            # 1. Send images first and track message IDs
             if images:
-                print("DEAD")
-                for img in images:
-                    send_whatsapp_image_message(
+                for i, img in enumerate(images):
+                    result = send_whatsapp_image_message(
                         from_number,
                         img["url"],
                         caption=img.get("caption", "")
                     )
+                    # Track sent message ID -> product ID
+                    if result.get("messages") and i < len(product_ids):
+                        sent_msg_id = result["messages"][0].get("id")
+                        if sent_msg_id:
+                            message_history.register_message(
+                                from_number, sent_msg_id, product_ids[i]
+                            )
 
             # 2. Then send summary text
             if text:
@@ -569,23 +583,34 @@ async def receive_webhook(request: Request):
 
         # Format 2: Detail response - {"messages": [{"type": "image"|"text", ...}]}
         elif "messages" in backend_data:
+            product_id = backend_data.get("product_id")
+            short_id = backend_data.get("short_id")
+
             for msg in backend_data["messages"]:
                 if msg["type"] == "image":
-                    send_whatsapp_image_message(
+                    result = send_whatsapp_image_message(
                         from_number,
                         msg["url"],
                         caption=""
                     )
+                    # Track image message for this product
+                    if result.get("messages") and product_id:
+                        sent_msg_id = result["messages"][0].get("id")
+                        if sent_msg_id:
+                            message_history.register_message(
+                                from_number, sent_msg_id, product_id, short_id
+                            )
                 elif msg["type"] == "text":
-                    send_whatsapp_text_message(from_number, msg["text"])
+                    result = send_whatsapp_text_message(from_number, msg["text"])
+                    # Also track text message for this product
+                    if result.get("sent_message_id") and product_id:
+                        message_history.register_message(
+                            from_number, result["sent_message_id"], product_id, short_id
+                        )
 
             # Track last viewed product for "add to cart" command
-            if "product_id" in backend_data:
-                cart_manager.set_last_viewed(
-                    from_number,
-                    backend_data["product_id"],
-                    backend_data.get("short_id")
-                )
+            if product_id:
+                cart_manager.set_last_viewed(from_number, product_id, short_id)
 
         # Format 3: Chat response - {"reply": str}
         elif "reply" in backend_data:

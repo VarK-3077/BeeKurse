@@ -94,10 +94,22 @@ class SearchResult(BaseModel):
         description="List of product IDs sorted by relevance (highest first)"
     )
 
+    no_relevant_results: bool = Field(
+        default=False,
+        description="True if no products matched the query criteria after filtering"
+    )
+
+    filter_reason: Optional[str] = Field(
+        default=None,
+        description="Reason for no results: 'gender_filter', 'relevance_threshold', or 'no_matches'"
+    )
+
     class Config:
         json_schema_extra = {
             "example": {
-                "product_ids": ["p-456", "p-123", "p-789"]
+                "product_ids": ["p-456", "p-123", "p-789"],
+                "no_relevant_results": False,
+                "filter_reason": None
             }
         }
 

@@ -24,12 +24,18 @@ except ImportError:
     ChatNVIDIA = None
 
 
-# Available product categories (from database)
+# Available product categories (from inventory.db)
 AVAILABLE_CATEGORIES = [
+    "accessories",
+    "bags & luggage",
+    "beauty & personal care",
     "clothing",
     "electronics",
-    "furniture",
+    "fashion",
+    "footwear",
     "grocery",
+    "innerwear",
+    "jewellery",
     "other"  # For products that don't fit existing categories
 ]
 
@@ -53,16 +59,9 @@ First, determine the query type:
 Extract a list of products requested. For each product:
 
 A. product_category: High-level category (REQUIRED)
-   - MUST be ONE of these exact values: clothing, electronics, furniture, grocery, other
-   - Use "other" if the product doesn't fit any specific category
-   - Examples:
-     * "shirt" → "clothing"
-     * "blouse" → "clothing"
-     * "laptop" → "electronics"
-     * "tomatoes" → "grocery"
-     * "chair" → "furniture"
-     * "rare collectible" → "other"
-   - IMPORTANT: Category MUST be lowercase
+   - MUST be ONE of: accessories, bags & luggage, beauty & personal care, clothing, electronics, fashion, footwear, grocery, innerwear, jewellery, other
+   - Examples: shirt→clothing, sneakers→footwear, lipstick→beauty & personal care, wallet→accessories, backpack→bags & luggage, bra→innerwear, necklace→jewellery, saree→fashion
+   - Use "other" if product doesn't fit. Category MUST be lowercase
 
 B. product_subcategory: Specific product type (e.g., "shirt", "polo shirt", "pillow", "tomatoes")
    - This is the detailed product type, while category is the broad classification

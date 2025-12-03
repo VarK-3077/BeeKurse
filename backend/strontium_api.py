@@ -45,8 +45,8 @@ strontium = StrontiumAgent(
 # Search Orchestrator
 orchestrator = SearchOrchestrator()
 
-# Chat Handler
-chat_handler = ChatHandler()
+# Chat Handler (with LLM support)
+chat_handler = ChatHandler(use_nvidia=config.USE_NVIDIA_LLM)
 
 # SQL Client for product details (main inventory)
 sql_client = SQLClient(db_path=config.SQL_DB_PATH)
@@ -62,6 +62,8 @@ class MessagePayload(BaseModel):
     """WhatsApp message payload from whatsapp_bot.py"""
     sender: str   # WhatsApp phone number (used as user_id)
     message: str  # User's text message
+    context_message_id: Optional[str] = None  # ID of message being replied to
+    incoming_message_id: Optional[str] = None  # This message's ID
 
 
 class VendorMessage(BaseModel):
@@ -74,15 +76,33 @@ class VendorMessage(BaseModel):
     incoming_message_id: Optional[str] = None  # This message's WhatsApp ID
 
 # ---------------------------------- Image Add ---------------------------------------------------
-def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestrator, sql_client: SQLClient) -> Dict[str, Any]:
+def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestrator, sql_client: SQLClient, user_id: str = None) -> Dict[str, Any]:
     """
     WhatsApp-friendly search response:
       - sends up to 4 product images
       - returns a text block with product summaries
     """
     try:
-        # Run Strontium search
-        search_results = orchestrator.search_strontium(parsed)
+        # Run Strontium search with user_id for personalized filtering
+        search_results = orchestrator.search_strontium(parsed, user_id=user_id)
+
+        # Check for no relevant results
+        for res in search_results:
+            if res.no_relevant_results:
+                # Get subcategory for friendly message
+                subcategory = "products"
+                products_list = parsed.get("products", [])
+                if products_list:
+                    subcategory = products_list[0].get("product_subcategory", "products")
+
+                if res.filter_reason == "gender_filter":
+                    msg = f"😔 Sorry, we don't have {subcategory}s matching your preferences in our catalog."
+                elif res.filter_reason == "relevance_threshold":
+                    msg = f"😔 Sorry, we don't have {subcategory}s in our catalog right now."
+                else:
+                    msg = "😔 Sorry, no products matched your search."
+
+                return {"text": msg, "images": []}
 
         # Gather product IDs
         all_product_ids = []
@@ -131,11 +151,14 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
 
         # ✨ Collect image URLs
         images = [{"url": p["image_url"], "caption": f"{p['prod_name']} (ID: {p['short_id']})"} for p in top_products]
-        # images = [{"url": "https://plus.unsplash.com/premium_photo-1762541871245-ffaf4ab5da47?w=600&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxmZWF0dXJlZC1waG90b3MtZmVlZHwyfHx8ZW58MHx8fHx8", "caption": "some random shit"}]
+
+        # Get product IDs for the images (for message tracking)
+        top_product_ids = all_product_ids[:4]
 
         return {
             "text": text_message,
-            "images": images    # <= send up to 4 images
+            "images": images,
+            "product_ids": top_product_ids  # For contextual reply tracking
         }
 
     except Exception as e:
@@ -214,20 +237,21 @@ def format_detail_response(
 # --------------------------------------------------------------------
 
 
-def format_chat_response(parsed: Dict[str, Any], chat_handler: ChatHandler) -> str:
+def format_chat_response(parsed: Dict[str, Any], chat_handler: ChatHandler, user_id: str = None) -> str:
     """
     Format chat response for WhatsApp
 
     Args:
         parsed: Strontium parsed output
         chat_handler: ChatHandler instance
+        user_id: User ID for context loading
 
     Returns:
         Chat response
     """
     try:
-        # Get chat response
-        response = chat_handler.handle_chat_output(parsed)
+        # Get chat response with user context
+        response = chat_handler.handle_chat_output(parsed, user_id)
         return response
 
     except Exception as e:
@@ -326,6 +350,31 @@ def handle_cart_view(user_id: str, parsed: Dict[str, Any]) -> str:
     return "Would you like to see your cart or wishlist?"
 
 
+def enhance_message_with_context(message: str, product_id: str, short_id: str = None) -> str:
+    """Enhance user message with product context from reply."""
+    msg_lower = message.lower().strip()
+    pid = short_id or product_id
+
+    # Check for detail patterns
+    if any(p in msg_lower for p in ["more detail", "details", "tell me more", "more info", "about this"]):
+        return f"details of {pid}"
+
+    # Check for cart patterns
+    if any(p in msg_lower for p in ["add to cart", "add this", "buy this", "cart"]):
+        return f"add {pid} to cart"
+
+    # Check for wishlist patterns
+    if any(p in msg_lower for p in ["save", "wishlist", "save this"]):
+        return f"add {pid} to wishlist"
+
+    # Check for similar patterns
+    if any(p in msg_lower for p in ["similar", "like this", "more like"]):
+        return f"products similar to {pid}"
+
+    # Default: append product reference
+    return f"{message} (about {pid})"
+
+
 @app.post("/process")
 def process_message(payload: MessagePayload):
     """
@@ -334,7 +383,9 @@ def process_message(payload: MessagePayload):
     Input:
         {
             "sender": "phone_number",
-            "message": "user query"
+            "message": "user query",
+            "context_message_id": "optional - ID of message being replied to",
+            "incoming_message_id": "optional - this message's ID"
         }
 
     Output:
@@ -351,6 +402,22 @@ def process_message(payload: MessagePayload):
         # Use phone number as user_id (clean it first)
         user_id = user_phone.replace("+", "").replace("-", "").replace(" ", "")
 
+        # Check if this is a reply to a product message
+        if payload.context_message_id:
+            from .message_history import get_message_history
+            message_history = get_message_history()
+            product_context = message_history.get_product_from_message(
+                user_id, payload.context_message_id
+            )
+            if product_context:
+                print(f"📎 Reply context: {product_context}")
+                user_message = enhance_message_with_context(
+                    user_message,
+                    product_context.get("product_id"),
+                    product_context.get("short_id")
+                )
+                print(f"📝 Enhanced message: {user_message}")
+
         # Step 1: Parse with Strontium
         print(f"🔍 Parsing query with Strontium...")
         parsed = strontium.process_query_to_dict(user_message, user_id)
@@ -361,7 +428,7 @@ def process_message(payload: MessagePayload):
         # Step 2: Route based on query type
         if query_type == "search":
             print(f"🔎 Executing search...")
-            response = format_search_response(parsed, orchestrator, sql_client)
+            response = format_search_response(parsed, orchestrator, sql_client, user_id=user_id)
             return response
 
         elif query_type == "detail":
@@ -371,7 +438,7 @@ def process_message(payload: MessagePayload):
 
         elif query_type == "chat":
             print(f"💬 Handling chat...")
-            reply_text = format_chat_response(parsed, chat_handler)
+            reply_text = format_chat_response(parsed, chat_handler, user_id)
 
         elif query_type == "cart_action":
             print(f"🛒 Processing cart action...")

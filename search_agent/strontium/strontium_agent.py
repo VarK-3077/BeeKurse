@@ -9,6 +9,7 @@ from .llm_parser import LLMParser
 from .user_context import UserContextManager
 from .formatters import QueryFormatter
 from .caching import CacheManager
+from .user_filter import get_user_filter_manager
 
 
 class StrontiumAgent:
@@ -112,6 +113,16 @@ class StrontiumAgent:
         if parsed.query_type in ("detail", "chat", "cart_action", "cart_view"):
             # These queries skip enrichment (no products to enrich)
             return self.formatter.format(parsed)
+
+        # Step 2.5: Apply user preference filters (gender, size, age)
+        user_filter = get_user_filter_manager()
+        for product in parsed.products:
+            filter_props = user_filter.get_filter_properties(
+                user_id, product.product_category
+            )
+            if filter_props:
+                # Merge filter properties with existing properties
+                product.properties = list(product.properties) + filter_props
 
         # Step 3: Enrich with user context (for search queries only)
         kg_cache = self.cache_manager.kg_cache if self.enable_caching else None

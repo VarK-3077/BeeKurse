@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import json
 from typing import List, Dict, Any
@@ -5,7 +6,8 @@ from typing import List, Dict, Any
 DB_PATH = "data/databases/sql/inventory.db"
 PRODUCT_TABLE_NAME = "product_table"
 
-DUMMY_IMG_BASE = "https://my-img-bucket-123.s3.ap-south-1.amazonaws.com"
+# Load S3 base URL from environment
+S3_IMAGE_BASE_URL = os.getenv("S3_IMAGE_BASE_URL", "https://my-img-bucket-123.s3.ap-south-1.amazonaws.com")
 
 
 def fetch_products_by_ids(
@@ -56,11 +58,9 @@ def fetch_products_by_ids(
         if not pid:
             continue
 
-        # ---- Image URL mapping (dummy for now) ----
-        image_id = row_dict.get("imageid")
-        image_url = f"https://my-img-bucket-123.s3.ap-south-1.amazonaws.com/{image_id}"
-
-        print(f"DEBUG: {image_url}")
+        # ---- Image URL mapping ----
+        image_id = row_dict.get("imageid")  # Already includes "images/..." path
+        image_url = f"{S3_IMAGE_BASE_URL}/{image_id}"
 
         # ---- Clean minimal object for WhatsApp backend ----
         results[pid] = {

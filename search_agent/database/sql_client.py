@@ -13,6 +13,13 @@ from config.config import Config
 
 config = Config
 
+# Gender mapping: user preference -> acceptable product genders
+GENDER_MAPPING = {
+    "male": ["Men", "Boys", "Unisex"],
+    "female": ["Women", "Girls", "Unisex"],
+    "both": None,  # No filtering
+}
+
 
 class SQLClient:
     """Client for SQL database operations"""
@@ -265,6 +272,58 @@ class SQLClient:
                 result[product_id] = literal_values
 
         return result
+
+    def filter_products_by_gender(
+        self,
+        product_ids: List[str],
+        user_gender_preference: str
+    ) -> List[str]:
+        """
+        Filter products by gender from other_properties JSON.
+
+        Args:
+            product_ids: List of product IDs to filter
+            user_gender_preference: User's gender preference ("male", "female", "both")
+
+        Returns:
+            List of product IDs that match the gender preference.
+            Products without gender (e.g., electronics, grocery) pass through.
+        """
+        if not product_ids:
+            return []
+
+        # "both" or unknown means no filtering
+        acceptable_genders = GENDER_MAPPING.get(user_gender_preference)
+        if acceptable_genders is None:
+            return product_ids
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        placeholders = ",".join("?" * len(product_ids))
+
+        # Build gender conditions for acceptable values
+        gender_conditions = " OR ".join(
+            f"json_extract(other_properties, '$.gender') = ?"
+            for _ in acceptable_genders
+        )
+
+        # Products without gender in other_properties pass through
+        # (e.g., Electronics, Grocery don't have gender)
+        query = f"""
+            SELECT product_id FROM product_table
+            WHERE product_id IN ({placeholders})
+            AND (
+                other_properties IS NULL
+                OR json_extract(other_properties, '$.gender') IS NULL
+                OR {gender_conditions}
+            )
+        """
+
+        params = list(product_ids) + acceptable_genders
+        cursor.execute(query, params)
+
+        return [row[0] for row in cursor.fetchall()]
 
     def _check_operator(self, product_value: Any, operator: str, target_value: Any, buffer: float) -> bool:
         """

@@ -7,6 +7,7 @@ and ranks products.
 from typing import Dict, List, Tuple, Optional
 from search_agent.models import ProductScore
 from search_agent.utils import merge_score_dictionaries, filter_and_rank_products, debug_print_scores
+from search_agent.strontium.user_filter import GENDER_FILTER_CATEGORIES
 from config.config import Config
 
 config = Config
@@ -29,8 +30,9 @@ class ScoreCombiner:
         property_scores: Dict[str, float],
         connected_scores: Dict[str, float],
         subcategory_scores: Dict[str, float] = None,
-        min_threshold: float = None
-    ) -> List[str]:
+        min_threshold: float = None,
+        gender_filter: Tuple[str, str] = None
+    ) -> Tuple[List[str], Optional[str]]:
         """
         Combine property, connected, and subcategory scores, filter, and rank
 
@@ -39,9 +41,11 @@ class ScoreCombiner:
             connected_scores: Dictionary of connected search bonus scores
             subcategory_scores: Dictionary of subcategory similarity bonus scores
             min_threshold: Minimum score threshold (default from config)
+            gender_filter: Optional (user_gender_preference, category) for hard filtering
 
         Returns:
-            List of product_ids sorted by final score (highest first)
+            Tuple of (List of product_ids sorted by final score, filter_reason or None)
+            filter_reason is set if all products were filtered out
         """
         # Step 1: Merge scores (additive)
         final_scores = merge_score_dictionaries(property_scores, connected_scores)
@@ -56,13 +60,45 @@ class ScoreCombiner:
             debug_print_scores(subcategory_scores, "Subcategory Scores")
         debug_print_scores(final_scores, "Final Combined Scores")
 
+        # Track filter reasons
+        filter_reason = None
+        products_before_gender_filter = len(final_scores)
+
+        # Step 1.5: Apply gender hard filter if applicable
+        if gender_filter and self.sql_client and final_scores:
+            user_gender, category = gender_filter
+            # Only apply gender filter for relevant categories
+            if category and category.lower() in GENDER_FILTER_CATEGORIES:
+                product_ids = list(final_scores.keys())
+                filtered_ids = self.sql_client.filter_products_by_gender(
+                    product_ids, user_gender
+                )
+                # Remove filtered-out products
+                filtered_out = set(product_ids) - set(filtered_ids)
+                for pid in filtered_out:
+                    del final_scores[pid]
+
+                if config.DEBUG:
+                    print(f"\n=== Gender Filter ({user_gender}) ===")
+                    print(f"  Before: {len(product_ids)} products")
+                    print(f"  After: {len(filtered_ids)} products")
+                    print(f"  Filtered out: {len(filtered_out)} products")
+
+                # If all products were filtered by gender
+                if products_before_gender_filter > 0 and len(final_scores) == 0:
+                    filter_reason = "gender_filter"
+
         # Step 2: Filter and rank
         ranked_product_ids = filter_and_rank_products(
             final_scores,
             min_threshold=min_threshold
         )
 
-        return ranked_product_ids
+        # If we had products after gender filter but threshold filtered them all
+        if filter_reason is None and products_before_gender_filter > 0 and len(ranked_product_ids) == 0:
+            filter_reason = "relevance_threshold"
+
+        return ranked_product_ids, filter_reason
 
     def get_detailed_scores(
         self,
