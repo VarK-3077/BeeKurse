@@ -95,7 +95,7 @@ class UnifiedIngestionQueue:
                         success = await write_triplet_to_memgraph(
                             session,
                             triplet,
-                            match_product_node=True
+                            match_product_node=False  # Always MERGE, don't try to MATCH
                         )
 
                     if success:

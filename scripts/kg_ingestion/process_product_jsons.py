@@ -22,6 +22,8 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 # Import the queue for type hinting
 from unified_ingestion_queue import UnifiedIngestionQueue
+# Import progress tracker for incremental processing
+from progress_tracker import get_completed_attribute_files, mark_attribute_file_complete
 
 # Property VDB Configuration
 PROPERTY_VDB_PATH = "../property_vdb"
@@ -461,7 +463,13 @@ async def process_directory(
         print(f"\n⚠ No JSON files found in: {directory_path}")
         return []
 
-    print(f"Found {len(json_files)} JSON files\n")
+    # Load already completed files for resumability
+    completed_files = get_completed_attribute_files()
+    files_to_process = [f for f in json_files if os.path.basename(f) not in completed_files]
+
+    print(f"Found {len(json_files)} JSON files total")
+    print(f"Already processed: {len(completed_files)} files")
+    print(f"Remaining to process: {len(files_to_process)} files\n")
 
     # Ensure new category-specific relations are in custom_relations_vdb
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -483,42 +491,31 @@ async def process_directory(
     all_product_info = []
 
     try:
-        # Process all files in parallel (with concurrency limit)
-        MAX_CONCURRENT_FILES = 10  # Process up to 10 files at once
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_FILES)
+        # Process files sequentially so we can track progress for resumability
+        print(f"Processing files sequentially for progress tracking...\n")
 
-        async def process_with_limit(filepath):
-            """Process a single file with semaphore limit"""
-            async with semaphore:
-                # We still create a session, but it's not used
-                # if the queue is active. This could be optimized,
-                # but it's safer to leave for now.
+        for filepath in files_to_process:
+            try:
                 async with await mg_conn.get_session() as session:
-                    return await process_product_json_file(
+                    result = await process_product_json_file(
                         filepath,
                         session,
                         property_vdb_collection,
                         property_embeddings,
-                        queue=queue  # <-- Pass the queue
+                        queue=queue
                     )
 
-        # Launch all file processing tasks in parallel
-        print(f"Processing files with max {MAX_CONCURRENT_FILES} concurrent tasks...\n")
-        results = await asyncio.gather(
-            *[process_with_limit(filepath) for filepath in json_files],
-            return_exceptions=True
-        )
+                products, triplets, product_info = result
+                total_products += products
+                total_triplets += triplets
+                all_product_info.extend(product_info)
 
-        # Aggregate results
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                print(f"✗ Error processing {json_files[i]}: {result}")
+                # Mark file as complete for resumability
+                mark_attribute_file_complete(os.path.basename(filepath))
+
+            except Exception as e:
+                print(f"✗ Error processing {filepath}: {e}")
                 continue
-
-            products, triplets, product_info = result
-            total_products += products
-            total_triplets += triplets
-            all_product_info.extend(product_info)
 
         print("\n" + "="*80)
         print("PROCESSING COMPLETE")

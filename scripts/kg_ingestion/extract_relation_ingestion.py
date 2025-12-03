@@ -41,6 +41,8 @@ from dotenv import load_dotenv
 from langchain_core.runnables import RunnableLambda
 # Import queue helpers
 from unified_ingestion_queue import UnifiedIngestionQueue, get_global_queue, shutdown_global_queue
+# Import progress tracker for incremental processing
+from progress_tracker import get_completed_relation_files, mark_relation_file_complete
 
 # Load environment variables from .env file in parent directory
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -74,27 +76,27 @@ if not API_KEYS:
 print(f"[LLM Setup] Loaded {len(API_KEYS)} NVIDIA API Keys for rotation.")
 
 # Create client pools for each LLM configuration
+# Extractors: Thinking OFF (faster for initial extraction)
 extractor_clients = [
     ChatNVIDIA(
-        model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        model="nvidia/llama-3.3-nemotron-super-49b-v1",
         api_key=key,
         temperature=0.2,
         top_p=0.85,
-        max_completeion_tokens=65536,
-        streaming=True
-    ) for key in API_KEYS
+        max_completion_tokens=32768,
+    ).with_thinking_mode(enabled=False) for key in API_KEYS
 ]
 
 # NOTE: Standardizer clients removed as Step 2 is now embedding-based
 
+# Verifiers: Thinking ON (better accuracy for validation)
 verifier_clients = [
     ChatNVIDIA(
-        model="nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        model="nvidia/llama-3.3-nemotron-super-49b-v1",
         api_key=key,
         temperature=0.0,
         top_p=0.95,
-        max_completeion_tokens=65536,
-        streaming=True
+        max_completion_tokens=32768,
     ) for key in API_KEYS
 ]
 
@@ -463,7 +465,7 @@ def add_property_to_property_vdb(relation: str, property_value: str, product_id:
         property_string = f"{property_type}:{property_value}"
 
         # Check for near-duplicates to avoid VDB bloat
-        existing = property_vdb.similarity_search_with_relevance_score(property_string, k=1)
+        existing = property_vdb.similarity_search_with_relevance_scores(property_string, k=1)
         if existing and existing[0][1] > 0.98:
             # Near-exact match already exists
             return
@@ -593,7 +595,7 @@ async def agent1_extract_worker(
                 "product_id": product_id,
                 "category": category
             })
-            
+
             if result is None:
                 raise Exception("LLM returned None or invalid JSON")
 
@@ -672,7 +674,7 @@ async def semantic_standardize_worker(
                 try:
                     # Perform similarity search with relevance score
                     # Note: LangChain Chroma returns 0-1 score where 1 is best (higher = more similar)
-                    results = custom_relations_vdb.similarity_search_with_relevance_score(raw_relation, k=1)
+                    results = custom_relations_vdb.similarity_search_with_relevance_scores(raw_relation, k=1)
 
                     if results:
                         doc, score = results[0]
@@ -1062,7 +1064,7 @@ async def extract_relations_from_description(
                 max_retries = 2
                 for attempt in range(max_retries):
                     try:
-                        results = custom_relations_vdb.similarity_search_with_relevance_score(raw_relation, k=1)
+                        results = custom_relations_vdb.similarity_search_with_relevance_scores(raw_relation, k=1)
 
                         if results:
                             doc, score = results[0]
@@ -1204,13 +1206,19 @@ async def extract_relations_from_directory(
     import glob
     import json
 
-    json_files = glob.glob(os.path.join(directory_path, "*.json"))
+    json_files = sorted(glob.glob(os.path.join(directory_path, "*.json")))
 
     if not json_files:
         print("⚠ No JSON files found for relation extraction")
         return 0
 
-    print(f"Found {len(json_files)} JSON files for relation extraction\n")
+    # Load already completed files for resumability
+    completed_files = get_completed_relation_files()
+    files_to_process = [f for f in json_files if os.path.basename(f) not in completed_files]
+
+    print(f"Found {len(json_files)} JSON files total for relation extraction")
+    print(f"Already processed: {len(completed_files)} files")
+    print(f"Remaining to process: {len(files_to_process)} files\n")
     
     if queue is None:
         print("[WARN] No queue provided to extract_relations_from_directory, getting global instance.")
@@ -1222,8 +1230,11 @@ async def extract_relations_from_directory(
     total_triplets = 0
 
     try:
-        for i, filepath in enumerate(json_files, 1):
+        for i, filepath in enumerate(files_to_process, 1):
+            filename = os.path.basename(filepath)
             try:
+                print(f"\n[{i}/{len(files_to_process)}] Processing: {filename}")
+
                 with open(filepath, 'r') as f:
                     data = json.load(f)
 
@@ -1239,6 +1250,8 @@ async def extract_relations_from_directory(
                 document_id = metadata.get('document_id', product_id)
 
                 if not description.strip():
+                    # Mark as complete even if no description (to avoid reprocessing)
+                    mark_relation_file_complete(filename)
                     continue
 
                 count = await extract_relations_from_description(
@@ -1253,8 +1266,12 @@ async def extract_relations_from_directory(
 
                 total_triplets += count
 
+                # Mark file as complete for resumability
+                mark_relation_file_complete(filename)
+
             except Exception as e:
                 print(f"✗ Error processing {filepath}: {e}")
+                # Don't mark as complete on error - will be retried on next run
                 continue
 
     finally:

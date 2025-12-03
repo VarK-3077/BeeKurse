@@ -43,6 +43,7 @@ from process_product_jsons import process_directory as process_jsons_directory
 # Import the correct function from the AI script
 from extract_relation_ingestion import extract_relations_from_directory
 from export_and_package import create_deployment_package
+from progress_tracker import print_progress_summary, mark_phase_complete
 
 # Custom Relations VDB Configuration
 CUSTOM_RELATIONS_VDB_PATH = os.path.join(os.path.dirname(__file__), "custom_relations_vdb")
@@ -106,6 +107,9 @@ async def run_pipeline(input_directory: str, skip_export: bool = False):
     print(f"Number of JSON files: {len([f for f in os.listdir(input_path) if f.endswith('.json')])}")
     print("="*80)
 
+    # Show progress from previous run (if any)
+    print_progress_summary()
+
     try:
         # Step 1: Initialize VDBs
         await initialize_vdbs()
@@ -133,6 +137,7 @@ async def run_pipeline(input_directory: str, skip_export: bool = False):
             queue=ingestion_queue
         )
         print(f"✓ Queued {len(product_info_list)} products for attribute ingestion")
+        mark_phase_complete("attributes_complete")
         print("="*80)
 
         # Step 4: Extract Relations from Descriptions
@@ -147,6 +152,7 @@ async def run_pipeline(input_directory: str, skip_export: bool = False):
             queue=ingestion_queue
         )
         print(f"✓ Queued {total_triplets} relation triplets for ingestion")
+        mark_phase_complete("relations_complete")
         print("="*80)
 
         # Step 5: Wait for queue to finish and stop
