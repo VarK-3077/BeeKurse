@@ -142,46 +142,96 @@ class ScoreCombiner:
     def rank_by_literal(
         self,
         product_ids: List[str],
-        sort_literal: Tuple[str, str]
+        sort_literal: Tuple[str, str],
+        relevance_scores: Dict[str, float] = None,
+        relevance_weight: float = None
     ) -> List[str]:
         """
-        Re-rank products by literal field value (for superlatives like "cheapest")
+        Re-rank products by COMBINED relevance + literal score.
+        Relevance has higher priority than price to ensure product type match.
 
         Args:
             product_ids: List of product IDs to re-rank
             sort_literal: Tuple of (field_name, direction)
                          E.g., ("price", "asc") for cheapest, ("price", "desc") for most expensive
+            relevance_scores: Dictionary of product_id -> relevance score
+            relevance_weight: Weight for relevance vs literal (default from config or 0.7)
 
         Returns:
-            List of product IDs sorted by the literal field
+            List of product IDs sorted by combined relevance + literal score
         """
         if not product_ids or not sort_literal or not self.sql_client:
             return product_ids
+
+        # Use config or default weight
+        if relevance_weight is None:
+            relevance_weight = getattr(config, 'LITERAL_SORT_RELEVANCE_WEIGHT', 0.7)
 
         field_name, direction = sort_literal
 
         # Fetch products from SQL to get literal values
         products_dict = self.sql_client.get_products_by_ids(product_ids)
 
-        # Create list of (product_id, field_value) tuples
-        product_values = []
+        # Get all literal values for normalization
+        literal_values = []
         for product_id in product_ids:
             product = products_dict.get(product_id)
             if product:
                 field_value = getattr(product, field_name, None)
                 if field_value is not None:
-                    product_values.append((product_id, field_value))
+                    literal_values.append((product_id, field_value))
 
-        # Sort by field value
-        reverse = (direction == "desc")  # desc = highest first (reverse=True)
-        product_values.sort(key=lambda x: x[1], reverse=reverse)
+        if not literal_values:
+            return product_ids
+
+        # If no relevance scores provided, fall back to pure literal sorting
+        if not relevance_scores:
+            reverse = (direction == "desc")
+            literal_values.sort(key=lambda x: x[1], reverse=reverse)
+            sorted_ids = [pid for pid, _ in literal_values]
+
+            if config.DEBUG:
+                print(f"\n=== Literal Ranking ({field_name} {direction}) - No relevance scores ===")
+                for i, (pid, val) in enumerate(literal_values[:10], 1):
+                    print(f"  {i}. {pid}: {field_name}={val}")
+
+            return sorted_ids
+
+        # Normalize literal values for scoring (0-1 range)
+        min_val = min(v for _, v in literal_values)
+        max_val = max(v for _, v in literal_values)
+        val_range = max_val - min_val if max_val != min_val else 1.0
+
+        # Normalize relevance scores
+        rel_values = [relevance_scores.get(pid, 0.0) for pid, _ in literal_values]
+        max_rel = max(rel_values) if rel_values else 1.0
+        max_rel = max_rel if max_rel > 0 else 1.0
+
+        # Calculate combined scores
+        combined_scores = []
+        for pid, val in literal_values:
+            # Normalize literal (0-1)
+            if direction == "asc":  # cheapest = higher score
+                literal_score = 1 - ((val - min_val) / val_range)
+            else:  # most expensive = higher score
+                literal_score = (val - min_val) / val_range
+
+            # Normalize relevance (0-1)
+            rel_score = relevance_scores.get(pid, 0.0) / max_rel
+
+            # Combined: relevance has higher weight
+            combined = (relevance_weight * rel_score) + ((1 - relevance_weight) * literal_score)
+            combined_scores.append((pid, combined, val, relevance_scores.get(pid, 0.0)))
+
+        # Sort by combined score (highest first)
+        combined_scores.sort(key=lambda x: x[1], reverse=True)
 
         # Extract sorted product IDs
-        sorted_ids = [product_id for product_id, _ in product_values]
+        sorted_ids = [pid for pid, _, _, _ in combined_scores]
 
         if config.DEBUG:
-            print(f"\n=== Literal Ranking ({field_name} {direction}) ===")
-            for i, (product_id, value) in enumerate(product_values[:10], 1):
-                print(f"  {i}. {product_id}: {field_name}={value}")
+            print(f"\n=== Weighted Literal Ranking ({field_name} {direction}, rel_weight={relevance_weight}) ===")
+            for i, (pid, combined, val, rel) in enumerate(combined_scores[:10], 1):
+                print(f"  {i}. {pid}: combined={combined:.3f} (rel={rel:.2f}, {field_name}={val})")
 
         return sorted_ids

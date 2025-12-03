@@ -60,7 +60,7 @@ Extract a list of products requested. For each product:
 
 A. product_category: High-level category (REQUIRED)
    - MUST be ONE of: accessories, bags & luggage, beauty & personal care, clothing, electronics, fashion, footwear, grocery, innerwear, jewellery, other
-   - Examples: shirt→clothing, sneakers→footwear, lipstick→beauty & personal care, wallet→accessories, backpack→bags & luggage, bra→innerwear, necklace→jewellery, saree→fashion
+   - Examples: shirt→clothing, sneakers→footwear, lipstick→beauty & personal care, wallet→accessories, watch→accessories, sunglasses→accessories, backpack→bags & luggage, bra→innerwear, necklace→jewellery, saree→fashion, phone case→electronics, mobile cover→electronics, headphones→electronics
    - Use "other" if product doesn't fit. Category MUST be lowercase
 
 B. product_subcategory: Specific product type (e.g., "shirt", "polo shirt", "pillow", "tomatoes")
@@ -183,7 +183,7 @@ Query: "Most expensive watch"
 {
   "query_type": "search",
   "products": [{
-    "product_category": "electronics",
+    "product_category": "accessories",
     "product_subcategory": "watch",
     "properties": [],
     "literals": [["price", ">", 0, 0.95]],
@@ -197,11 +197,25 @@ Query: "Shoes like p-123 but cheaper"
 {
   "query_type": "search",
   "products": [{
-    "product_category": "clothing",
+    "product_category": "footwear",
     "product_subcategory": "shoes",
     "properties": [],
     "literals": [],
     "prev_products": [["p-123", []]],
+    "is_hq": false,
+    "sort_literal": null
+  }]
+}
+
+Query: "Blue phone case"
+{
+  "query_type": "search",
+  "products": [{
+    "product_category": "electronics",
+    "product_subcategory": "phone case",
+    "properties": [["blue", 1.5, "HAS_COLOUR"]],
+    "literals": [],
+    "prev_products": [],
     "is_hq": false,
     "sort_literal": null
   }]

@@ -227,7 +227,7 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
         if len(all_product_ids) > 4:
             gallery_message = (
                 f"🖼️ *View all {len(all_product_ids)} products with images:*\n\n"
-                f"http://localhost:5173?user={user_id}"
+                f"http://localhost:5400?user={user_id}"
             )
 
         return {

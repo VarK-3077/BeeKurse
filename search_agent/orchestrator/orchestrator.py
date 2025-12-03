@@ -156,9 +156,19 @@ class SearchOrchestrator:
 
         # STEP 5: Re-rank by literal field if sort_literal is specified (for superlatives)
         if query.sort_literal and ranked_product_ids:
+            # Combine all relevance scores for weighted ranking
+            all_relevance_scores = {**property_scores}
+            if connected_scores:
+                for k, v in connected_scores.items():
+                    all_relevance_scores[k] = all_relevance_scores.get(k, 0) + v
+            if subcategory_scores:
+                for k, v in subcategory_scores.items():
+                    all_relevance_scores[k] = all_relevance_scores.get(k, 0) + v
+
             ranked_product_ids = self.score_combiner.rank_by_literal(
                 product_ids=ranked_product_ids,
-                sort_literal=query.sort_literal
+                sort_literal=query.sort_literal,
+                relevance_scores=all_relevance_scores
             )
 
         # Check for no results after filtering

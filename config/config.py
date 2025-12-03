@@ -113,6 +113,9 @@ class Config:
     # Relevance Filtering (for "no results" handling)
     SUBCATEGORY_RELEVANCE_THRESHOLD: float = 0.5  # Minimum subcategory similarity for relevance
 
+    # Literal Sort Weighting (for superlatives like "cheapest", "most expensive")
+    # Higher value = more weight on relevance (product type match) vs price
+    LITERAL_SORT_RELEVANCE_WEIGHT: float = 0.7  # 70% relevance, 30% price
 
     # ===== VDB Query Parameters =====
 
