@@ -1,15 +1,15 @@
 import { useState, useEffect } from "react";
 import { Button } from "../components/ui/button";
-import { 
-  Upload, 
-  Image as ImageIcon, 
-  FileText, 
-  X, 
-  Plus, 
+import {
+  Upload,
+  Image as ImageIcon,
+  FileText,
+  X,
+  Plus,
   LogOut,
   Store,
   Package,
-  DollarSign,
+  IndianRupee,
   Tag,
   Sparkles
 } from "lucide-react";
@@ -44,7 +44,7 @@ const DashboardPage = () => {
   const fetchVendorInfo = async () => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch("http://localhost:8000/users/me", {
+      const response = await fetch("http://localhost:8003/users/me", {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -119,31 +119,51 @@ const DashboardPage = () => {
 
   const handleSubmit = async () => {
     setMessage("");
-    
-    // Validation
-    if (!productData.name || !productData.category || !images.length) {
-      setMessage("Please fill in required fields and upload at least one image");
+
+    // Validation - mandatory fields
+    if (!productData.name) {
+      setMessage("Product name is required");
       return;
     }
-    
+    if (!productData.category) {
+      setMessage("Category is required");
+      return;
+    }
+    if (!productData.subcategory) {
+      setMessage("Subcategory is required");
+      return;
+    }
+    if (!productData.price || parseFloat(productData.price) <= 0) {
+      setMessage("Price is required and must be greater than 0");
+      return;
+    }
+    if (!productData.stock || parseInt(productData.stock) < 0) {
+      setMessage("Stock quantity is required");
+      return;
+    }
+    if (!images.length) {
+      setMessage("Please upload at least one product image");
+      return;
+    }
+
     setUploading(true);
-    
+
     try {
       const token = localStorage.getItem("token");
-      
+
       // Prepare FormData
       const formData = new FormData();
-      
+
       // Add all files
       images.forEach(img => formData.append("files", img));
       documents.forEach(doc => formData.append("files", doc));
-      
+
       // Prepare product data
       const productPayload = {
         name: productData.name,
         category: productData.category,
         subcategory: productData.subcategory,
-        price: productData.price ? `${productData.price}` : "0",
+        price: parseFloat(productData.price),
         description: productData.description || "",
         colors: productData.colors.filter(c => c.trim() !== ""),
         sizes: productData.sizes.filter(s => s.trim() !== ""),
@@ -158,7 +178,7 @@ const DashboardPage = () => {
       // Add product data as JSON string
       formData.append("product_data", JSON.stringify(productPayload));
       
-      const uploadResponse = await fetch("http://localhost:8000/files/", {
+      const uploadResponse = await fetch("http://localhost:8003/files/", {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`
@@ -275,7 +295,7 @@ const DashboardPage = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Category *
+                      Category <span className="text-red-400">*</span>
                     </label>
                     <select
                       name="category"
@@ -291,48 +311,69 @@ const DashboardPage = () => {
                       <option value="footwear">Footwear</option>
                       <option value="textiles">Textiles & Fabrics</option>
                       <option value="home_decor">Home Decor</option>
+                      <option value="other">Other</option>
                     </select>
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Subcategory
+                      Subcategory <span className="text-red-400">*</span>
                     </label>
-                    <input
-                      name="subcategory"
-                      value={productData.subcategory}
-                      onChange={handleInputChange}
-                      className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-                      placeholder="e.g., Blouse, Shirt, Dress"
-                    />
+                    {productData.category === "other" ? (
+                      <input
+                        name="subcategory"
+                        value={productData.subcategory}
+                        onChange={handleInputChange}
+                        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        placeholder="Enter custom subcategory"
+                      />
+                    ) : (
+                      <input
+                        name="subcategory"
+                        value={productData.subcategory}
+                        onChange={handleInputChange}
+                        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        placeholder="e.g., Blouse, Shirt, Dress"
+                      />
+                    )}
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-2">
-                      <DollarSign className="w-4 h-4 inline mr-1" />
-                      Price
+                      Price <span className="text-red-400">*</span>
                     </label>
                     <div className="flex gap-2">
-                      <input
-                        name="price"
-                        type="number"
-                        step="0.01"
-                        value={productData.price}
-                        onChange={handleInputChange}
-                        className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-                        placeholder="0.00"
-                      />
+                      <div className="relative flex-1">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">₹</span>
+                        <input
+                          name="price"
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          required
+                          value={productData.price}
+                          onChange={handleInputChange}
+                          className="w-full bg-slate-800/50 border border-slate-700 rounded-lg pl-8 pr-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                          placeholder="Enter price"
+                        />
+                      </div>
                       <select
                         name="unit"
                         value={productData.unit}
                         onChange={handleInputChange}
-                        className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                        className="bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition min-w-[120px]"
                       >
                         <option value="item">per item</option>
+                        <option value="piece">per piece</option>
                         <option value="kg">per kg</option>
-                        <option value="g">per g</option>
-                        <option value="lb">per lb</option>
+                        <option value="g">per 100g</option>
+                        <option value="litre">per litre</option>
+                        <option value="ml">per 500ml</option>
                         <option value="dozen">per dozen</option>
+                        <option value="pair">per pair</option>
+                        <option value="set">per set</option>
+                        <option value="meter">per meter</option>
+                        <option value="sqft">per sq.ft</option>
                       </select>
                     </div>
                   </div>
@@ -340,11 +381,13 @@ const DashboardPage = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Stock Quantity
+                    Stock Quantity <span className="text-red-400">*</span>
                   </label>
                   <input
                     name="stock"
                     type="number"
+                    min="0"
+                    required
                     value={productData.stock}
                     onChange={handleInputChange}
                     className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
@@ -408,7 +451,8 @@ const DashboardPage = () => {
                   </Button>
                 </div>
 
-                {/* Sizes */}
+                {/* Sizes - Only show for clothing categories */}
+                {["mens_clothing", "womens_clothing", "kids_clothing", "footwear"].includes(productData.category) && (
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-2">
                     Available Sizes
@@ -439,6 +483,7 @@ const DashboardPage = () => {
                     Add Size
                   </Button>
                 </div>
+                )}
 
                 {/* Materials */}
                 <div>

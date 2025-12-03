@@ -63,7 +63,7 @@ const RegisterPage = () => {
     try {
       // For now, we'll just use username and password for the API
       // You'll need to update your backend to accept additional fields
-      const response = await fetch("http://localhost:8000/register", {
+      const response = await fetch("http://localhost:8003/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

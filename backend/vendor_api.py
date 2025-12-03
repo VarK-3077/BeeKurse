@@ -3,7 +3,7 @@ import httpx
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Annotated, Optional, List
+from typing import Annotated, Optional, List, Dict, Any
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -121,19 +121,36 @@ class VendorProfileUpdate(BaseModel):
 
 # Pydantic model for product data
 class ProductCreate(BaseModel):
-    name: str
-    category: str
-    subcategory: str
-    price: str
+    # Mandatory basic info
+    name: str = Field(..., min_length=1, description="Product name (required)")
+    category: str = Field(..., min_length=1, description="Product category (required)")
+    subcategory: str = Field(..., min_length=1, description="Product subcategory (required)")
+    price: float = Field(..., gt=0, description="Product price (required, must be positive)")
+    stock: int = Field(..., ge=0, description="Stock quantity (required)")
+
+    # Multiple sizes and colors supported
+    colors: List[str] = Field(default=[], description="List of available colors")
+    sizes: List[str] = Field(default=[], description="List of available sizes")
+
+    # Optional fields
     description: Optional[str] = None
-    colors: List[str] = []
-    sizes: List[str] = []
     materials: Optional[str] = None
     care_instructions: Optional[str] = None
-    stock: int
     dimensions: Optional[str] = None
     brand: Optional[str] = None
     unit: Optional[str] = "item"
+
+    # Other properties - for custom fields, especially when category is "other"
+    other_properties: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Custom properties dict - use when category is 'other' or for additional attributes"
+    )
+
+    # Custom subcategory - used when subcategory is "other"
+    custom_subcategory: Optional[str] = Field(
+        default=None,
+        description="Custom subcategory name when 'other' is selected"
+    )
 
 # Helper functions
 def verify_password(plain_password, hashed_password):
@@ -565,23 +582,40 @@ async def upload_files(
         desc_parts.append(f"materials: {product.materials}")
     full_description = " | ".join(p for p in desc_parts if p)
 
+    # Handle "other" category/subcategory - use custom values if provided
+    final_subcategory = product.subcategory
+    if product.subcategory.lower() == "other" and product.custom_subcategory:
+        final_subcategory = product.custom_subcategory
+
+    # Store multiple colors as comma-separated string
+    colors_str = ", ".join(product.colors) if product.colors else ""
+
+    # Store multiple sizes as comma-separated string
+    sizes_str = ", ".join(product.sizes) if product.sizes else ""
+
+    # Prepare other_properties as JSON string
+    other_props_json = None
+    if product.other_properties:
+        other_props_json = json.dumps(product.other_properties)
+
     complete_product = {
         "product_id": product_id,
         "prod_name": product.name,
         "price": product.price,
         "quantity": "1",
         "qunatityunit": product.unit,
-        "size": ", ".join(product.sizes) if product.sizes else "",
+        "size": sizes_str,
         "store": current_user.business_name,
         "dimensions": product.dimensions or "",
         "brand": product.brand or "",
-        "colour": product.colors[0] if product.colors else "",
+        "colour": colors_str,
         "descrption": full_description,
         "category": product.category,
         "imageid": image_files[0] if image_files else "",
-        "subcategory": product.subcategory or "none",
+        "subcategory": final_subcategory,
         "rating": 0,
         "stock": product.stock,
+        "other_properties": other_props_json,
     }
 
     # Check demo mode
@@ -605,8 +639,8 @@ async def upload_files(
             cursor.execute('''INSERT INTO product_table
                 (product_id, prod_name, store, category, subcategory, brand, colour,
                  description, dimensions, imageid, price, quantity, quantityunit,
-                 rating, size, stock, short_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                 rating, size, stock, short_id, other_properties)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                 (complete_product["product_id"], complete_product["prod_name"],
                  complete_product["store"], complete_product["category"],
                  complete_product["subcategory"], complete_product["brand"],
@@ -614,7 +648,8 @@ async def upload_files(
                  complete_product["dimensions"], complete_product["imageid"],
                  float(complete_product["price"]) if complete_product["price"] else 0,
                  1, complete_product["qunatityunit"], 0,
-                 complete_product["size"], complete_product["stock"], short_id))
+                 complete_product["size"], complete_product["stock"], short_id,
+                 complete_product.get("other_properties")))
             conn.commit()
             conn.close()
             print(f"🎭 Demo: Product saved with short_id={short_id}")

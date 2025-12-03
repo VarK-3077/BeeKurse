@@ -49,6 +49,133 @@ except ImportError:
     ChatNVIDIA = None
 
 
+# ==================== Yes/No LLM-Based Intent Detection ====================
+
+# Cache for LLM intent detection client
+_intent_llm_client = None
+
+def _get_intent_llm_client():
+    """Get or create the LLM client for intent detection."""
+    global _intent_llm_client
+    if _intent_llm_client is None and NVIDIA_LLM_AVAILABLE:
+        try:
+            _intent_llm_client = ChatNVIDIA(
+                model=Config.NVIDIA_MODEL,
+                api_key=Config.NVIDIA_API_KEY,
+                temperature=0.0,  # Deterministic for classification
+                max_tokens=10,    # We only need YES/NO/UNKNOWN
+            )
+        except Exception as e:
+            print(f"Failed to initialize intent LLM: {e}")
+            _intent_llm_client = None
+    return _intent_llm_client
+
+
+# Quick pattern check for obvious cases (to avoid LLM call)
+_QUICK_AFFIRMATIVE = {
+    "yes", "y", "yep", "yeah", "yea", "ya", "yup", "ok", "okay", "k", "kk",
+    "sure", "confirm", "correct", "fine", "good", "great", "done", "proceed",
+    "haan", "ha", "theek", "sahi", "ji", "bilkul", "agreed", "accept"
+}
+
+_QUICK_NEGATIVE = {
+    "no", "n", "nope", "nah", "na", "cancel", "abort", "stop", "nahi", "mat", "reject"
+}
+
+
+def _is_affirmative(text: str) -> bool:
+    """
+    Check if the text is an affirmative response using LLM inference.
+    Falls back to pattern matching if LLM is unavailable.
+    """
+    normalized = text.lower().strip()
+    no_spaces = normalized.replace(" ", "")
+
+    # Quick check for obvious affirmatives (avoid LLM call)
+    if normalized in _QUICK_AFFIRMATIVE or no_spaces in _QUICK_AFFIRMATIVE:
+        return True
+
+    # Quick check for obvious negatives
+    if normalized in _QUICK_NEGATIVE or no_spaces in _QUICK_NEGATIVE:
+        return False
+
+    # For short inputs that look like typos of "yes" or "ok"
+    if len(no_spaces) <= 4:
+        # Typo patterns for "yes"
+        if set(no_spaces).issubset({'y', 'e', 's', 'a'}) and len(no_spaces) >= 2:
+            return True
+        # Typo patterns for "ok"
+        if set(no_spaces).issubset({'o', 'k', 'a', 'y'}) and 'o' in no_spaces:
+            return True
+
+    # Use LLM for ambiguous/complex responses
+    llm = _get_intent_llm_client()
+    if llm is None:
+        # Fallback: assume not affirmative for safety
+        return False
+
+    try:
+        prompt = f"""Classify if this message means YES/CONFIRM or NO/REJECT or is UNCLEAR.
+Message: "{text}"
+
+Rules:
+- If the person is agreeing, confirming, saying yes in any language/style -> output: YES
+- If the person is disagreeing, rejecting, saying no in any language/style -> output: NO
+- If unclear or unrelated -> output: UNKNOWN
+
+Output only one word: YES, NO, or UNKNOWN"""
+
+        response = llm.invoke(prompt)
+        result = response.content.strip().upper()
+
+        return result == "YES"
+    except Exception as e:
+        print(f"LLM intent detection error: {e}")
+        return False
+
+
+def _is_negative(text: str) -> bool:
+    """
+    Check if the text is a negative response using LLM inference.
+    Falls back to pattern matching if LLM is unavailable.
+    """
+    normalized = text.lower().strip()
+    no_spaces = normalized.replace(" ", "")
+
+    # Quick check for obvious negatives
+    if normalized in _QUICK_NEGATIVE or no_spaces in _QUICK_NEGATIVE:
+        return True
+
+    # Quick check for obvious affirmatives
+    if normalized in _QUICK_AFFIRMATIVE or no_spaces in _QUICK_AFFIRMATIVE:
+        return False
+
+    # Use LLM for ambiguous/complex responses
+    llm = _get_intent_llm_client()
+    if llm is None:
+        # Fallback: assume not negative for safety
+        return False
+
+    try:
+        prompt = f"""Classify if this message means YES/CONFIRM or NO/REJECT or is UNCLEAR.
+Message: "{text}"
+
+Rules:
+- If the person is agreeing, confirming, saying yes in any language/style -> output: YES
+- If the person is disagreeing, rejecting, saying no in any language/style -> output: NO
+- If unclear or unrelated -> output: UNKNOWN
+
+Output only one word: YES, NO, or UNKNOWN"""
+
+        response = llm.invoke(prompt)
+        result = response.content.strip().upper()
+
+        return result == "NO"
+    except Exception as e:
+        print(f"LLM intent detection error: {e}")
+        return False
+
+
 # ==================== LLM-Based Product Parser ====================
 
 VENDOR_PRODUCT_PARSER_PROMPT = """You are a product information extraction tool for a vendor inventory system.
@@ -1272,19 +1399,66 @@ def _ocr_data_to_payload(ocr_data: Dict[str, Any]) -> Dict[str, Any]:
 # ==================== Image Save Utility ====================
 
 PRODUCT_IMAGES_DIR = Path(Config.BASE_DIR) / "data" / "databases" / "images"
+MOCK_IMAGES_BASE_DIR = Path(Config.BASE_DIR) / "data" / "mock_images"
 
 
-def _save_product_image(source_path: str, product_id: str) -> Optional[str]:
+def _normalize_phone(phone: str) -> str:
+    """Normalize phone number for comparison (remove +, -, spaces)."""
+    return phone.replace("+", "").replace("-", "").replace(" ", "")
+
+
+def _get_vendor_username_by_phone(phone: str) -> Optional[str]:
     """
-    Save a product image to the database/images directory.
+    Look up vendor username from phone number.
+    Uses mock_vendor.db in demo mode, main vendor.db otherwise.
+    """
+    import sqlite3
+
+    if DEMO_CONFIG.get("demo_mode", False):
+        db_path = Path(Config.BASE_DIR) / DEMO_CONFIG.get("mock_databases", {}).get("vendor_db", "data/databases/mock/mock_vendor.db")
+    else:
+        db_path = Path(Config.BASE_DIR) / "data" / "databases" / "sql" / "vendor.db"
+
+    if not db_path.exists():
+        print(f"⚠️ Vendor DB not found: {db_path}")
+        return None
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        normalized_phone = _normalize_phone(phone)
+
+        # Search for vendor by normalized phone
+        rows = conn.execute("SELECT username, phone FROM vendors").fetchall()
+        for row in rows:
+            if _normalize_phone(row["phone"]) == normalized_phone:
+                username = row["username"]
+                conn.close()
+                print(f"📦 Found vendor username '{username}' for phone {phone}")
+                return username
+
+        conn.close()
+        print(f"⚠️ No vendor found for phone {phone}")
+        return None
+    except Exception as e:
+        print(f"❌ Error looking up vendor: {e}")
+        return None
+
+
+def _save_product_image(source_path: str, product_id: str, vendor_phone: str = None) -> Optional[str]:
+    """
+    Save a product image to the appropriate directory.
+
+    In demo mode: saves to data/mock_images/{vendor_username}/
+    In production: saves to data/databases/images/
 
     Args:
         source_path: Path to the source image file
         product_id: Product ID to use in the filename
+        vendor_phone: Vendor's phone number (used to look up username in demo mode)
 
     Returns:
-        Relative path to saved image (e.g., "data/databases/images/prod_xxx.jpg")
-        or None if saving failed
+        Relative path to saved image or None if saving failed
     """
     import shutil
 
@@ -1292,8 +1466,20 @@ def _save_product_image(source_path: str, product_id: str) -> Optional[str]:
         return None
 
     try:
+        # Determine target directory based on mode
+        if DEMO_CONFIG.get("demo_mode", False):
+            # Look up vendor username by phone
+            vendor_username = _get_vendor_username_by_phone(vendor_phone) if vendor_phone else None
+            if vendor_username:
+                images_dir = MOCK_IMAGES_BASE_DIR / vendor_username
+            else:
+                # Fallback to generic whatsapp_vendor folder
+                images_dir = MOCK_IMAGES_BASE_DIR / "whatsapp_vendor"
+        else:
+            images_dir = PRODUCT_IMAGES_DIR
+
         # Create images directory if not exists
-        PRODUCT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        images_dir.mkdir(parents=True, exist_ok=True)
 
         # Get file extension from source
         _, ext = os.path.splitext(source_path)
@@ -1302,7 +1488,7 @@ def _save_product_image(source_path: str, product_id: str) -> Optional[str]:
 
         # Create destination filename
         dest_filename = f"{product_id}{ext}"
-        dest_path = PRODUCT_IMAGES_DIR / dest_filename
+        dest_path = images_dir / dest_filename
 
         # Copy the image
         shutil.copy2(source_path, dest_path)
@@ -1875,12 +2061,12 @@ class InventoryIntake:
         # Save product image if provided
         image_path = None
         if payload.get("image_path"):
-            image_path = _save_product_image(payload["image_path"], product_id)
+            image_path = _save_product_image(payload["image_path"], product_id, vendor_phone=user_id)
 
         cur.execute("""
             INSERT INTO product_table (
                 product_id, prod_name, store, category, subcategory, brand,
-                colour, descrption, dimensions, price, quantity, quantityunit, stock,
+                colour, description, dimensions, price, quantity, quantityunit, stock,
                 size, imageid, rating, other_properties, short_id, image_path
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
@@ -2121,21 +2307,39 @@ class VendorIntakeFlow:
                 ]
             }
 
+        # ===== Greeting Handler =====
+        # Handle "hi", "hello", etc. - show welcome menu
+        greetings = {"hi", "hello", "hey", "hii", "hiii", "hola", "namaste", "good morning", "good afternoon", "good evening"}
+        if lower in greetings or lower.startswith(("hi ", "hello ", "hey ")):
+            session.reset()
+            session.mode = "menu"  # Lock to menu mode
+            return self._show_welcome_menu()
+
         # ===== Global Exit/Cancel/Reset Commands =====
         # These work in any state to reset the session
-        if lower in {"exit", "cancel", "abort", "reset", "stop", "quit", "start over", "nevermind", "nvm"}:
+        if lower in {"exit", "cancel", "abort", "reset", "stop", "quit", "start over", "nevermind", "nvm", "close", "bye", "goodbye", "close session", "end session", "end"}:
             session.reset()
+            session.mode = "closed"  # Mark session as closed - only greeting can reactivate
             return {
                 "messages": [
                     {
                         "type": "text",
                         "text": (
-                            "Session reset.\n\n"
-                            "What would you like to do?\n"
-                            "- Type 'add' to add new products\n"
-                            "- Type 'update' to update existing products\n"
-                            "- Type 'inventory' to view your products"
+                            "Session closed. Goodbye! \n\n"
+                            "Send *hi* anytime to start a new session."
                         ),
+                    }
+                ]
+            }
+
+        # ===== Handle Closed Session =====
+        # If session is closed, only greetings can reactivate it
+        if session.mode == "closed":
+            return {
+                "messages": [
+                    {
+                        "type": "text",
+                        "text": "Session is closed. Send *hi* to start a new session."
                     }
                 ]
             }
@@ -2775,16 +2979,24 @@ class VendorIntakeFlow:
                         {
                             "type": "text",
                             "text": (
-                                "Your inventory is empty.\n\n"
-                                "To add products, send:\n"
-                                "add [name] [price] [qty] [unit] [stock]\n"
-                                "Example: add Maggi 10 1 pack 50"
+                                "📦 Your inventory is empty.\n\n"
+                                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                                "➕ *Add Products*\n"
+                                "   add [name] [price] [qty] [unit] [stock]\n"
+                                "   Example: add Maggi 10 1 pack 50\n\n"
+                                "📋 *Bulk Add*\n"
+                                "   bulk add\n"
+                                "   Maggi 10 1 50\n"
+                                "   Chips 20 1 100\n\n"
+                                "❌ *Exit*\n"
+                                "   Type: exit or close\n"
+                                "━━━━━━━━━━━━━━━━━━━━━━"
                             ),
                         }
                     ]
                 }
 
-            lines = ["*Your Inventory*", "━━━━━━━━━━━━━━━━━━━━━━"]
+            lines = ["📦 *Your Inventory*", "━━━━━━━━━━━━━━━━━━━━━━"]
 
             for i, p in enumerate(inventory, start=1):
                 lines.append(f"{i}. *{p['name']}* (ID: {p['short_id']})")
@@ -2794,14 +3006,21 @@ class VendorIntakeFlow:
             lines.append("━━━━━━━━━━━━━━━━━━━━━━")
             lines.append(f"Total: {len(inventory)} product(s)")
             lines.append("")
-            lines.append("*Quick Edit:*")
-            lines.append("To change any value, reply:")
-            lines.append("• \"change [name/ID] price to [value]\"")
-            lines.append("• \"change [name/ID] stock to [value]\"")
+            lines.append("*What would you like to do next?*")
             lines.append("")
-            lines.append("Examples:")
-            lines.append("• change maggi price to 15")
-            lines.append("• change JXYK stock to 100")
+            lines.append("➕ *Add Products*")
+            lines.append("   Type: add [name] [price] [qty] [unit] [stock]")
+            lines.append("")
+            lines.append("🔄 *Quick Change*")
+            lines.append("   change [ID] [field] to [value]")
+            lines.append("   Example: change JXYK stock to 50")
+            lines.append("")
+            lines.append("🗑️ *Remove Product*")
+            lines.append("   remove [ID]")
+            lines.append("")
+            lines.append("❌ *Exit*")
+            lines.append("   Type: exit or close")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━")
 
             return {"messages": [{"type": "text", "text": "\n".join(lines)}]}
 
@@ -2857,35 +3076,41 @@ class VendorIntakeFlow:
                 ]
             }
 
-    def _prompt_mode(self, session: SessionState) -> Dict[str, Any]:
-        session.mode = None
-        session.pending_confirmation = None
+    def _show_welcome_menu(self) -> Dict[str, Any]:
+        """Show the welcome menu with emoji formatting."""
         return {
             "messages": [
                 {
                     "type": "text",
                     "text": (
-                        "Welcome! What would you like to do?\n\n"
+                        "👋 Welcome! What would you like to do?\n\n"
                         "━━━━━━━━━━━━━━━━━━━━━━\n"
-                        "*View Inventory*\n"
+                        "📦 *View Inventory*\n"
                         "   Type: inventory\n\n"
-                        "*Add Product(s)*\n"
+                        "➕ *Add Product(s)*\n"
                         "   add [name] [price] [qty] [unit] [stock]\n"
                         "   Example: add Maggi 10 1 pack 50\n\n"
-                        "*Bulk Add/Update*\n"
+                        "📋 *Bulk Add/Update*\n"
                         "   Send multiple products, one per line:\n"
                         "   bulk add\n"
                         "   Maggi 10 1 50\n"
                         "   Chips 20 1 100\n"
                         "   Biscuits 15 1 75\n\n"
-                        "*Quick Change*\n"
+                        "🔄 *Quick Change*\n"
                         "   change [ID] [field] to [value]\n"
-                        "   Example: change JXYK stock to 50\n"
+                        "   Example: change JXYK stock to 50\n\n"
+                        "❌ *Exit*\n"
+                        "   Type: exit or close\n"
                         "━━━━━━━━━━━━━━━━━━━━━━"
                     ),
                 }
             ]
         }
+
+    def _prompt_mode(self, session: SessionState) -> Dict[str, Any]:
+        session.mode = None
+        session.pending_confirmation = None
+        return self._show_welcome_menu()
 
     # --------------------- Bulk Processing Methods ---------------------
 
@@ -3115,7 +3340,7 @@ class VendorIntakeFlow:
             }
 
         # Handle the reply for this specific item
-        if lower in {'yes', 'y', 'ok', 'confirm', 'correct'}:
+        if _is_affirmative(message):
             # Check if item is complete
             item = pending_item["item"]
             missing = item.get_missing_required_fields()
@@ -3484,7 +3709,7 @@ class VendorIntakeFlow:
             return self._complete_bulk_processing(session)
 
         # User confirms
-        if lower in {"yes", "y", "ok", "correct", "confirm", "done", "good"}:
+        if _is_affirmative(message) or lower in {"done", "good"}:
             # Process this item (add/update)
             payload = current_item.to_payload()
             mode = session.bulk_mode or "add"
@@ -4054,8 +4279,8 @@ class VendorIntakeFlow:
 
         # Handle inferred confirmation (from space-separated input parsing)
         if action in {"inferred_add", "inferred_update"}:
-            # User confirms with 'yes', 'y', 'ok', 'confirm'
-            if lower in {"yes", "y", "ok", "confirm", "yep", "yeah", "sure"}:
+            # User confirms with 'yes', 'y', 'ok', 'confirm' (with typo tolerance)
+            if _is_affirmative(message):
                 payload = pending.get("payload", {})
 
                 # For 'add' mode, do a final similarity check before adding
@@ -4089,7 +4314,7 @@ class VendorIntakeFlow:
                 return self._complete_intake(session, payload, matched_product_id=None)
 
             # User says 'no' - behavior depends on mode
-            if lower in {"no", "n", "nope"}:
+            if _is_negative(message):
                 payload = pending.get("payload", {})
 
                 # For ADD mode: 'no' means "don't update existing, just add my new product"
