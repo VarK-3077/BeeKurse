@@ -100,16 +100,7 @@ def set_user_images(user_id: str, products_data: List[Dict[str, Any]]):
     user_current_images[user_id] = []
     
     for product in products_data:
-        user_current_images[user_id].append({
-            "url": product.get("image_url", ""),
-            "caption": product.get("prod_name", ""),
-            "product_id": product.get("product_id", ""),
-            "short_id": product.get("short_id", ""),
-            "name": product.get("prod_name", ""),
-            "price": product.get("price", "N/A"),
-            "rating": product.get("rating", "N/A"),
-            "store": product.get("store", "Unknown")
-        })
+        user_current_images[user_id].append(product)
     
     print(f"📸 Set {len(products_data)} images for user {user_id} (replaced old images)")
 
@@ -173,14 +164,31 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
             if pid in products:
                 p = products[pid]
                 all_products_data.append({
-                    "image_url": p["image_url"],
-                    "prod_name": p["prod_name"],
+                    "url": p.get("image_url", ""),
+                    "imageid": p.get("imageid", ""),
+                    "prod_name": p.get("prod_name", ""),
+                    "name": p.get("prod_name", ""),
                     "product_id": pid,
-                    "short_id": p["short_id"],
-                    "price": p["price"],
-                    "rating": p["rating"],
-                    "store": p["store"]
+                    "short_id": p.get("short_id", ""),
+                    "price": p.get("price", ""),
+                    "rating": p.get("rating", "N/A"),
+                    "store": p.get("store", ""),
+                    "store_contact": p.get("store_contact", ""),
+                    "store_location": p.get("store_location", {}),
+                    "brand": p.get("brand", ""),
+                    "colour": p.get("colour", ""),
+                    "color": p.get("colour", ""),
+                    "description": p.get("description", ""),
+                    "category": p.get("category", ""),
+                    "subcategory": p.get("subcategory", ""),
+                    "stock": p.get("stock"),
+                    "quantity": p.get("quantity", ""),
+                    "quantityunit": p.get("quantityunit", ""),
+                    "size": p.get("size", ""),
+                    "dimensions": p.get("dimensions", {}),
+                    "other_properties": p.get("other_properties", {})
                 })
+
 
         # Store ALL products in backend
         set_user_images(user_id, all_products_data)

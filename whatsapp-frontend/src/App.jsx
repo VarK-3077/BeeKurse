@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { ShoppingBag, Package, Store, Star, ExternalLink, MessageCircle } from "lucide-react";
+import { ShoppingBag, Package, Store, Star, ExternalLink, MessageCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 export default function App() {
   const [products, setProducts] = useState([]);
@@ -7,6 +7,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [expandedImage, setExpandedImage] = useState(null);
   const [userId, setUserId] = useState(null);
+  const [expandedDescriptions, setExpandedDescriptions] = useState({});
 
   // zoom + pan state
   const imgRef = useRef(null);
@@ -66,6 +67,13 @@ export default function App() {
       document.body.style.overflow = "";
     };
   }, [expandedImage]);
+
+  const toggleDescription = (index) => {
+    setExpandedDescriptions(prev => ({
+      ...prev,
+      [index]: !prev[index]
+    }));
+  };
 
   const closeViewer = () => {
     setExpandedImage(null);
@@ -206,72 +214,144 @@ export default function App() {
           <p className="text-gray-600 text-lg">Found {products.length} amazing products for you</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {products.map((p, i) => (
             <div
               key={i}
-              className="group bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 overflow-hidden border border-gray-100 hover:border-purple-200"
+              className="group bg-white rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-300 overflow-hidden border-2 border-gray-100 hover:border-purple-300 flex flex-col"
             >
-              <div className="relative overflow-hidden bg-gradient-to-br from-gray-100 to-gray-50">
+              <div className="relative overflow-hidden bg-gradient-to-br from-gray-100 to-gray-50 h-80">
                 <img
-                  src={p.url}
-                  alt={p.name}
-                  onClick={() => setExpandedImage(p.url)}
-                  className="w-full h-64 object-cover group-hover:scale-105 transition-transform duration-500 cursor-pointer"
+                  src={p.url || p.imageid}
+                  alt={p.prod_name || p.name}
+                  onClick={() => setExpandedImage(p.url || p.imageid)}
+                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 cursor-pointer"
                   onError={(e) => {
                     e.target.src = "https://via.placeholder.com/400x400?text=Image+Not+Available";
                   }}
                 />
-                <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm px-3 py-1.5 rounded-full shadow-lg">
-                  <p className="text-lg font-bold text-purple-600">₹{p.price}</p>
+                <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-sm px-4 py-2 rounded-full shadow-xl">
+                  <p className="text-xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">₹{p.price}</p>
                 </div>
                 {p.rating && p.rating !== "N/A" && (
-                  <div className="absolute top-3 left-3 bg-amber-400/95 backdrop-blur-sm px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1">
-                    <Star className="w-4 h-4 fill-white text-white" />
+                  <div className="absolute top-4 left-4 bg-gradient-to-r from-amber-400 to-orange-500 px-3 py-2 rounded-full shadow-xl flex items-center gap-1.5">
+                    <Star className="w-5 h-5 fill-white text-white" />
                     <p className="text-sm font-bold text-white">{p.rating}</p>
                   </div>
                 )}
               </div>
 
-              <div className="p-5 space-y-4">
-                <div className="space-y-2">
-                  <h2 className="text-lg font-bold text-gray-900 leading-tight line-clamp-2 min-h-[3.5rem]">
-                    {p.name}
+              <div className="p-6 space-y-4 flex-1 flex flex-col">
+                <div className="space-y-4 flex-1">
+                  <h2 className="text-xl font-bold text-gray-900 leading-tight line-clamp-2">
+                    {p.prod_name || p.name}
                   </h2>
                   
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Store className="w-4 h-4 text-purple-600" />
-                    <span className="font-medium">{p.store}</span>
+                  {p.brand && (
+                    <div className="inline-flex items-center px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-100 to-pink-100 border border-purple-200">
+                      <p className="text-sm font-semibold text-purple-700">{p.brand}</p>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 text-sm text-gray-600 bg-gray-50 rounded-lg p-3">
+                    <Store className="w-5 h-5 text-purple-600 flex-shrink-0" />
+                    <div className="flex-1">
+                      <span className="font-semibold block">{p.store}</span>
+                      {p.store_contact && (
+                        <span className="text-xs text-gray-500">📞 {p.store_contact}</span>
+                      )}
+                    </div>
                   </div>
 
-                  {p.short_id && (
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-100 text-purple-700 text-xs font-medium">
-                      <Package className="w-3 h-3" />
-                      ID: {p.short_id}
+                  {p.description && (
+                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
+                      <p className={`text-sm text-gray-700 leading-relaxed ${expandedDescriptions[i] ? '' : 'line-clamp-3'}`}>
+                        {p.description}
+                      </p>
+                      {p.description.length > 150 && (
+                        <button
+                          onClick={() => toggleDescription(i)}
+                          className="mt-2 text-xs font-semibold text-purple-600 hover:text-purple-700 flex items-center gap-1 transition-colors"
+                        >
+                          {expandedDescriptions[i] ? (
+                            <>Show less <ChevronUp className="w-3 h-3" /></>
+                          ) : (
+                            <>Read more <ChevronDown className="w-3 h-3" /></>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    {p.colour && (
+                      <span className="inline-flex items-center px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-100 to-pink-100 border border-purple-200 text-xs font-semibold text-purple-700">
+                        🎨 {p.colour}
+                      </span>
+                    )}
+                    
+                    {p.stock !== undefined && (
+                      <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold border ${
+                        p.stock > 10 
+                          ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200 text-green-700' 
+                          : p.stock > 0 
+                          ? 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200 text-amber-700'
+                          : 'bg-gradient-to-r from-red-50 to-rose-50 border-red-200 text-red-700'
+                      }`}>
+                        {p.stock > 0 ? `✓ ${p.stock} in stock` : '✗ Out of stock'}
+                      </span>
+                    )}
+
+                    {p.quantity && p.quantityunit && (
+                      <span className="inline-flex items-center px-3 py-1.5 rounded-full bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 text-xs font-semibold text-blue-700">
+                        📦 {p.quantity} {p.quantityunit}
+                      </span>
+                    )}
+                  </div>
+
+                  {(p.size || p.dimensions) && (
+                    <div className="text-xs text-gray-600 bg-gradient-to-r from-gray-50 to-slate-50 rounded-lg p-3 border border-gray-200">
+                      <span className="font-semibold text-gray-700">📏 Dimensions: </span>
+                      {p.size || `${p.dimensions.length} × ${p.dimensions.width} × ${p.dimensions.height} ${p.dimensions.unit}`}
+                      {p.dimensions?.weight && (
+                        <span className="block mt-1">
+                          <span className="font-semibold text-gray-700">⚖️ Weight: </span>
+                          {p.dimensions.weight}{p.dimensions.weight_unit}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {p.other_properties?.warranty_years && (
+                    <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200">
+                      <span className="text-lg">🛡️</span>
+                      <span className="text-sm font-semibold text-green-700">
+                        {p.other_properties.warranty_years} year warranty
+                      </span>
                     </div>
                   )}
                 </div>
 
-                <div className="flex gap-2 pt-2 border-t border-gray-200">
+                <div className="pt-4 border-t-2 border-gray-100">
                   <a
                     href={`https://wa.me/15551935302?text=${encodeURIComponent(
-                      `Hi, I'm interested in ${p.name} (ID: ${p.short_id})`
+                      `Hi, I'm interested in ${p.prod_name || p.name}${p.product_id ? ` (ID: ${p.product_id.slice(0, 8)})` : ''}`
                     )}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="
-                      flex-1 flex items-center justify-center gap-2
-                      text-center font-semibold text-white text-sm
-                      bg-gradient-to-br from-green-600 to-emerald-700
-                      hover:from-green-700 hover:to-emerald-800
-                      py-2.5 rounded-lg
-                      shadow-md hover:shadow-lg
+                      w-full flex items-center justify-center gap-2
+                      text-center font-bold text-white text-base
+                      bg-gradient-to-r from-green-600 via-emerald-600 to-green-700
+                      hover:from-green-700 hover:via-emerald-700 hover:to-green-800
+                      py-3.5 rounded-xl
+                      shadow-lg hover:shadow-xl
                       transition-all duration-300
-                      hover:-translate-y-0.5 active:scale-95
+                      hover:-translate-y-1 active:scale-95
                     "
                   >
-                    <MessageCircle className="w-4 h-4" />
-                    Chat
+                    <MessageCircle className="w-5 h-5" />
+                    Chat with Store
                   </a>
                 </div>
               </div>
