@@ -5,6 +5,7 @@ Replaces backend_dummy.py with full search engine capabilities
 import sys
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
 from typing import Dict, Any, List, Optional
@@ -28,6 +29,14 @@ config = Config
 
 # Initialize FastAPI
 app = FastAPI(title="Strontium WhatsApp Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=".*",  # Your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize components
 print("🚀 Initializing Strontium Backend...")
@@ -75,6 +84,44 @@ class VendorMessage(BaseModel):
     context_id: Optional[str] = None  # ID of message being replied to (for multi-product tracking)
     incoming_message_id: Optional[str] = None  # This message's WhatsApp ID
 
+
+
+# Structure: {user_id: [{"url": str, "caption": str, "product_id": str, "short_id": str, "name": str, "price": str, "rating": str, "store": str}]}
+user_current_images: Dict[str, List[Dict[str, Any]]] = {}
+
+def set_user_images(user_id: str, products_data: List[Dict[str, Any]]):
+    """
+    Set/Replace all images for a user (clears previous images)
+    
+    Args:
+        user_id: User identifier (phone number)
+        products_data: List of product dicts with all details
+    """
+    user_current_images[user_id] = []
+    
+    for product in products_data:
+        user_current_images[user_id].append({
+            "url": product.get("image_url", ""),
+            "caption": product.get("prod_name", ""),
+            "product_id": product.get("product_id", ""),
+            "short_id": product.get("short_id", ""),
+            "name": product.get("prod_name", ""),
+            "price": product.get("price", "N/A"),
+            "rating": product.get("rating", "N/A"),
+            "store": product.get("store", "Unknown")
+        })
+    
+    print(f"📸 Set {len(products_data)} images for user {user_id} (replaced old images)")
+
+
+def get_user_images(user_id: str) -> List[Dict[str, Any]]:
+    """Get current images for a user"""
+    return user_current_images.get(user_id, [])
+
+
+# ------------------------------ stuff for displaying additional images ends -------------------
+
+
 # ---------------------------------- Image Add ---------------------------------------------------
 def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestrator, sql_client: SQLClient, user_id: str = None) -> Dict[str, Any]:
     """
@@ -119,6 +166,26 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
         # products = sql_client.get_products_by_ids(all_product_ids)
         products = fetch_products_by_ids(all_product_ids)
 
+
+        # Build complete product data for storage
+        all_products_data = []
+        for pid in all_product_ids:
+            if pid in products:
+                p = products[pid]
+                all_products_data.append({
+                    "image_url": p["image_url"],
+                    "prod_name": p["prod_name"],
+                    "product_id": pid,
+                    "short_id": p["short_id"],
+                    "price": p["price"],
+                    "rating": p["rating"],
+                    "store": p["store"]
+                })
+
+        # Store ALL products in backend
+        set_user_images(user_id, all_products_data)
+
+
         # Pick top 4 products for images
         top_products = [products[pid] for pid in all_product_ids[:4] if pid in products]
 
@@ -155,9 +222,18 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
         # Get product IDs for the images (for message tracking)
         top_product_ids = all_product_ids[:4]
 
+        # ✨ Build gallery link message (separate)
+        gallery_message = None
+        if len(all_product_ids) > 4:
+            gallery_message = (
+                f"🖼️ *View all {len(all_product_ids)} products with images:*\n\n"
+                f"http://localhost:5173?user={user_id}"
+            )
+
         return {
             "text": text_message,
             "images": images,
+            "gallery_link": gallery_message,
             "product_ids": top_product_ids  # For contextual reply tracking
         }
 
@@ -538,6 +614,38 @@ def register_message_ids(payload: Dict[str, Any]):
         return {"status": "ok", "count": len(mappings)}
 
     return {"status": "warning", "detail": "Session not found"}
+
+
+# to display additional images
+@app.get("/images/{user_id}")
+def get_images(user_id: str):
+    """
+    Get current search images for a user
+    
+    Returns:
+        {
+            "user_id": str,
+            "products": [
+                {
+                    "url": str,
+                    "name": str,
+                    "price": str,
+                    "rating": str,
+                    "store": str,
+                    "short_id": str,
+                    "product_id": str
+                }
+            ],
+            "total": int
+        }
+    """
+    images = get_user_images(user_id)
+    
+    return {
+        "user_id": user_id,
+        "products": images,
+        "total": len(images)
+    }
 
 
 # Development server

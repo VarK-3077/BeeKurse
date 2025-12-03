@@ -558,6 +558,7 @@ async def receive_webhook(request: Request):
         # Format 1: Search response - {"text": str, "images": list, "product_ids": list}
         if "text" in backend_data or "images" in backend_data:
             text = backend_data.get("text")
+            gallery_link = backend_data.get("gallery_link")
             images = backend_data.get("images", [])
             product_ids = backend_data.get("product_ids", [])
 
@@ -580,6 +581,8 @@ async def receive_webhook(request: Request):
             # 2. Then send summary text
             if text:
                 send_whatsapp_text_message(from_number, text)
+            if gallery_link:
+                send_whatsapp_text_message(from_number, gallery_link)
 
         # Format 2: Detail response - {"messages": [{"type": "image"|"text", ...}]}
         elif "messages" in backend_data:
