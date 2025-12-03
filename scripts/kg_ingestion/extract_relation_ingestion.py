@@ -292,35 +292,75 @@ Output JSON format:
 
 # --- Helper: Extract JSON from LLM output (handles thinking text) ---
 def extract_json_from_output(text: str) -> str:
+    """Extract JSON from LLM output that may contain <think> tags or other text."""
     import re
     import json as json_lib
 
-    # Strategy 1: Remove XML tags first
-    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    if not text:
+        return "{}"
+
+    # Strategy 1: Remove all <think>...</think> blocks (greedy to handle nested content)
+    cleaned = re.sub(r'<think>[\s\S]*?</think>', '', text, flags=re.IGNORECASE)
+
+    # Strategy 2: If <think> exists without closing tag, take everything after </think> or after last >
+    if '<think>' in text.lower() and '</think>' not in text.lower():
+        # Try to find content after the thinking section ends (look for JSON start)
+        json_start_match = re.search(r'[{\[]', text)
+        if json_start_match:
+            cleaned = text[json_start_match.start():]
+
+    # Remove any remaining XML-like tags
     cleaned = re.sub(r'<[^>]+>', '', cleaned)
     cleaned = cleaned.strip()
 
-    # Strategy 2: Find all JSON-like blocks
-    json_pattern = r'\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}'
-    matches = list(re.finditer(json_pattern, cleaned, re.DOTALL))
+    # Strategy 3: Find JSON object or array patterns
+    # Try to find a complete JSON object
+    json_obj_pattern = r'\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}'
+    json_arr_pattern = r'\[(?:[^\[\]]|(?:\[(?:[^\[\]]|(?:\[[^\[\]]*\]))*\]))*\]'
 
+    # First try to find JSON object (most common case)
+    matches = list(re.finditer(json_obj_pattern, cleaned, re.DOTALL))
     if matches:
+        # Try from the last match (often the actual output, not examples in prompt)
         for match in reversed(matches):
             try:
                 candidate = match.group(0)
-                json_lib.loads(candidate)  # Validate
+                json_lib.loads(candidate)
                 return candidate
             except:
                 continue
 
-    # Strategy 3: Try the cleaned text as-is
+    # Try array pattern (for batch results)
+    arr_matches = list(re.finditer(json_arr_pattern, cleaned, re.DOTALL))
+    if arr_matches:
+        for match in reversed(arr_matches):
+            try:
+                candidate = match.group(0)
+                json_lib.loads(candidate)
+                return candidate
+            except:
+                continue
+
+    # Strategy 4: Try the cleaned text as-is
     try:
         json_lib.loads(cleaned)
         return cleaned
     except:
         pass
 
-    return text.strip()
+    # Strategy 5: Last resort - look for JSON in original text
+    for pattern in [json_obj_pattern, json_arr_pattern]:
+        matches = list(re.finditer(pattern, text, re.DOTALL))
+        for match in reversed(matches):
+            try:
+                candidate = match.group(0)
+                json_lib.loads(candidate)
+                return candidate
+            except:
+                continue
+
+    # Return empty object if nothing found
+    return "{}"
 
 # --- Chains ---
 extract_parser = JsonOutputParser(pydantic_object=ExtractionOutput)
