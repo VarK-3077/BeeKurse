@@ -18,6 +18,8 @@ from memgraph_utils import MemgraphConnection, create_product_node, write_triple
 import chromadb
 from chromadb.config import Settings
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
 # Import the queue for type hinting
 from unified_ingestion_queue import UnifiedIngestionQueue
 
@@ -41,6 +43,138 @@ ATTR_TYPE_MAPPING = {
     "colour": "colour",
     "gender": "gender"
 }
+
+# Category-specific attribute mappings for other_properties
+# Format: field_name: (relation_type, node_type, condition_fn, transform_fn)
+# - condition_fn: If provided, only add triplet if condition_fn(value) is True
+# - transform_fn: If provided, transform value before adding
+CATEGORY_ATTRIBUTE_MAPPINGS = {
+    "electronics": {
+        "warranty_years": ("HAS_WARRANTY", "warranty", lambda v: v and v > 0, lambda v: f"{v} years"),
+        "energy_rating": ("HAS_ENERGY_RATING", "energy_rating", lambda v: v and v != "Not Rated", None),
+    },
+    "fashion": {
+        "gender": ("FOR_GENDER", "gender", None, None),
+        "season": ("HAS_SEASONALITY", "season", None, None),
+        "usage": ("HAS_OCCASION_TYPE", "occasion", None, None),
+        "occasion": ("HAS_OCCASION_TYPE", "occasion", None, None),
+        "fabric": ("HAS_MATERIAL", "material", None, None),
+        "fit": ("HAS_FIT", "fit", None, None),
+        "neck": ("HAS_NECK_TYPE", "neck_type", None, None),
+        "pattern": ("HAS_PATTERN", "pattern", None, None),
+        "print_pattern": ("HAS_PATTERN", "pattern", None, None),
+        "sleeve_length": ("HAS_SLEEVE_LENGTH", "sleeve_length", None, None),
+    },
+    "grocery": {
+        "organic": ("IS_ORGANIC", "organic", lambda v: v is True, lambda v: "Yes"),
+        "locally_sourced": ("IS_LOCALLY_SOURCED", "locally_sourced", lambda v: v is True, lambda v: "Yes"),
+        "ripeness": ("HAS_RIPENESS", "ripeness", None, None),
+        "fat_content": ("HAS_FAT_CONTENT", "fat_content", None, None),
+    }
+}
+
+# New relations that need to be added to custom_relations_vdb
+NEW_RELATIONS_TO_ADD = {
+    "HAS_ENERGY_RATING": {
+        "description": "Energy efficiency rating of electronic products",
+        "category": "electronics"
+    },
+    "IS_ORGANIC": {
+        "description": "Whether the product is organically produced",
+        "category": "food"
+    },
+    "IS_LOCALLY_SOURCED": {
+        "description": "Whether the product is locally sourced",
+        "category": "food"
+    },
+    "HAS_RIPENESS": {
+        "description": "Ripeness level of produce",
+        "category": "food"
+    },
+    "HAS_FAT_CONTENT": {
+        "description": "Fat content level of food products",
+        "category": "food"
+    },
+    "HAS_NECK_TYPE": {
+        "description": "Neckline type of clothing",
+        "category": "fashion"
+    },
+    "HAS_SLEEVE_LENGTH": {
+        "description": "Sleeve length of clothing",
+        "category": "fashion"
+    }
+}
+
+
+def ensure_relations_in_vdb(vdb_path: str = "./custom_relations_vdb"):
+    """
+    Ensure new category-specific relations exist in the custom_relations_vdb.
+    Only adds relations that don't already exist (similarity < 0.98).
+
+    Args:
+        vdb_path: Path to the custom relations VDB
+    """
+    print("\nChecking custom_relations_vdb for new relations...")
+
+    # Initialize embeddings
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+    # Load existing VDB
+    vdb = Chroma(
+        persist_directory=vdb_path,
+        embedding_function=embeddings,
+        collection_name="ecommerce_relations"
+    )
+
+    added_count = 0
+    for relation_name, relation_data in NEW_RELATIONS_TO_ADD.items():
+        # Check if relation already exists (similarity > 0.98 means exact match)
+        results = vdb.similarity_search_with_relevance_scores(relation_name, k=1)
+
+        if results and results[0][1] > 0.98:
+            print(f"  [skip] {relation_name} already exists")
+            continue
+
+        # Add to VDB
+        doc = Document(
+            page_content=relation_name,
+            metadata={
+                "relation": relation_name,
+                "description": relation_data["description"],
+                "category": relation_data["category"],
+                "type": "seed_relation"
+            }
+        )
+        vdb.add_documents([doc])
+        print(f"  [added] {relation_name}")
+        added_count += 1
+
+    print(f"Added {added_count} new relations to custom_relations_vdb\n")
+    return added_count
+
+
+def detect_category_from_filename(filepath: str) -> str:
+    """
+    Detect product category from filename prefix.
+
+    Args:
+        filepath: Path to the JSON file
+
+    Returns:
+        Category string: "electronics", "fashion", "grocery", or "unknown"
+    """
+    if not filepath:
+        return "unknown"
+    basename = os.path.basename(filepath).lower()
+    if basename.startswith("electronics_"):
+        return "electronics"
+    elif basename.startswith("fashion_"):
+        return "fashion"
+    elif basename.startswith("grocery_"):
+        return "grocery"
+    return "unknown"
 
 
 def extract_property_type_from_relation(relation_name: str) -> str:
@@ -127,7 +261,8 @@ def format_triplet(
 
 def extract_product_data(
     product_data: Dict[str, Any],
-    metadata: Dict[str, Any]
+    metadata: Dict[str, Any],
+    filepath: str = None
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """
     Extract product node data and attribute triplets from product JSON.
@@ -135,6 +270,7 @@ def extract_product_data(
     Args:
         product_data: Product metadata
         metadata: Document metadata
+        filepath: Path to source file (used to detect category)
 
     Returns:
         Tuple of (product_node_data, attribute_triplets)
@@ -157,6 +293,7 @@ def extract_product_data(
     # --- Attribute Triplets ---
     attribute_triplets = []
 
+    # Extract top-level attributes
     for attr_name, relation_name in ATTRIBUTE_TO_RELATION.items():
         if attr_name in product_data and product_data[attr_name]:
             value = product_data[attr_name]
@@ -170,9 +307,38 @@ def extract_product_data(
                 target_name=str(value),
                 target_type=node_type,
                 metadata=metadata,
-                category=category  # <-- Pass category
+                category=category
             )
             attribute_triplets.append(triplet)
+
+    # --- Extract other_properties based on category ---
+    category_type = detect_category_from_filename(filepath)
+    other_props = product_data.get("other_properties", {})
+    category_mappings = CATEGORY_ATTRIBUTE_MAPPINGS.get(category_type, {})
+
+    for field, (relation_name, node_type, condition_fn, transform_fn) in category_mappings.items():
+        value = other_props.get(field)
+        if value is None:
+            continue
+
+        # Check condition (e.g., skip organic=false, skip "Not Rated")
+        if condition_fn and not condition_fn(value):
+            continue
+
+        # Transform value if needed (e.g., 3 -> "3 years", True -> "Yes")
+        final_value = transform_fn(value) if transform_fn else str(value)
+
+        triplet = format_triplet(
+            product_id=product_id,
+            product_name=product_name,
+            document_id=document_id,
+            relation_type=relation_name,
+            target_name=final_value,
+            target_type=node_type,
+            metadata=metadata,
+            category=category
+        )
+        attribute_triplets.append(triplet)
 
     return product_node_data, attribute_triplets
 
@@ -231,7 +397,7 @@ async def process_product_json_file(
     for product_data, metadata in items_to_process:
         # Extract product and attribute data
         product_node_data, attribute_triplets = extract_product_data(
-            product_data, metadata
+            product_data, metadata, filepath=filepath
         )
 
         # [MODIFIED] Node creation is now handled by the queue worker's MERGE logic
@@ -296,6 +462,11 @@ async def process_directory(
         return []
 
     print(f"Found {len(json_files)} JSON files\n")
+
+    # Ensure new category-specific relations are in custom_relations_vdb
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    custom_vdb_path = os.path.join(script_dir, "custom_relations_vdb")
+    ensure_relations_in_vdb(custom_vdb_path)
 
     # [DELETED] VDB Initialization block removed.
     # This fixes the "different settings" warning.

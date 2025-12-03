@@ -180,6 +180,18 @@
       "category": "fashion"
     },
 
+    "HAS_NECK_TYPE": {
+      "description": "Neckline type of clothing",
+      "examples": ["Round Neck", "V-Neck", "Collar", "Crew Neck", "Turtle Neck"],
+      "category": "fashion"
+    },
+
+    "HAS_SLEEVE_LENGTH": {
+      "description": "Sleeve length of clothing",
+      "examples": ["Short Sleeves", "Long Sleeves", "Sleeveless", "3/4 Sleeves"],
+      "category": "fashion"
+    },
+
     "_comment_furniture": "=== FURNITURE & HOME DECOR ===",
 
     "HAS_FINISH": {
@@ -268,6 +280,30 @@
       "category": "food"
     },
 
+    "IS_ORGANIC": {
+      "description": "Whether the product is organically produced",
+      "examples": ["Yes"],
+      "category": "food"
+    },
+
+    "IS_LOCALLY_SOURCED": {
+      "description": "Whether the product is locally sourced",
+      "examples": ["Yes"],
+      "category": "food"
+    },
+
+    "HAS_RIPENESS": {
+      "description": "Ripeness level of produce",
+      "examples": ["Ready to Eat", "Firm", "Ripe", "Green"],
+      "category": "food"
+    },
+
+    "HAS_FAT_CONTENT": {
+      "description": "Fat content level of food products",
+      "examples": ["Full Fat", "Low Fat", "Fat Free", "Reduced Fat"],
+      "category": "food"
+    },
+
     "_comment_electronics": "=== ELECTRONICS & TECH (Inferred from domain knowledge) ===",
 
     "HAS_REFRESH_RATE": {
@@ -327,6 +363,12 @@
     "HAS_WARRANTY": {
       "description": "Warranty period and coverage",
       "examples": ["1 year manufacturer warranty", "2 years"],
+      "category": "electronics"
+    },
+
+    "HAS_ENERGY_RATING": {
+      "description": "Energy efficiency rating of electronic products",
+      "examples": ["3 Star", "5 Star", "A++", "Energy Star"],
       "category": "electronics"
     },
 

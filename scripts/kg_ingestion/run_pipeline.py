@@ -34,8 +34,9 @@ if not (os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_API_KEY_1")):
     sys.exit(1)
 
 # Import pipeline modules
-from init_custom_relations_vdb import init_custom_relations_vdb
 from init_property_vdb import init_property_vdb
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
 # Use the global queue helpers
 from unified_ingestion_queue import get_global_queue, shutdown_global_queue
 from process_product_jsons import process_directory as process_jsons_directory
@@ -43,32 +44,44 @@ from process_product_jsons import process_directory as process_jsons_directory
 from extract_relation_ingestion import extract_relations_from_directory
 from export_and_package import create_deployment_package
 
+# Custom Relations VDB Configuration
+CUSTOM_RELATIONS_VDB_PATH = os.path.join(os.path.dirname(__file__), "custom_relations_vdb")
+CUSTOM_RELATIONS_COLLECTION_NAME = "ecommerce_relations"
+
 
 async def initialize_vdbs():
-    """Initialize both custom relations and property VDBs."""
+    """Load existing VDBs (non-destructive)."""
     print("\n" + "="*80)
-    print("STEP 1: INITIALIZING VECTOR DATABASES")
+    print("STEP 1: LOADING VECTOR DATABASES")
     print("="*80)
 
-    # Initialize Custom Relations VDB (for relation standardization)
-    print("\n[1/2] Initializing Custom Relations VDB...")
+    # Load existing Custom Relations VDB (do NOT reinitialize from seeds)
+    print("\n[1/2] Loading Custom Relations VDB...")
     try:
-        custom_vdb, custom_embeddings = init_custom_relations_vdb()
-        print("✓ Custom Relations VDB ready")
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        )
+        custom_vdb = Chroma(
+            persist_directory=CUSTOM_RELATIONS_VDB_PATH,
+            embedding_function=embeddings,
+            collection_name=CUSTOM_RELATIONS_COLLECTION_NAME
+        )
+        count = custom_vdb._collection.count()
+        print(f"Custom Relations VDB ready ({count} relations)")
     except Exception as e:
-        print(f"✗ Error initializing Custom Relations VDB: {e}")
+        print(f"Error loading Custom Relations VDB: {e}")
         raise
 
-    # Initialize Property VDB (for property value embeddings)
-    print("\n[2/2] Initializing Property VDB...")
+    # Initialize Property VDB (non-destructive, uses get_or_create)
+    print("\n[2/2] Loading Property VDB...")
     try:
         property_vdb, property_embeddings = init_property_vdb()
-        print("✓ Property VDB ready")
+        print("Property VDB ready")
     except Exception as e:
-        print(f"✗ Error initializing Property VDB: {e}")
+        print(f"Error loading Property VDB: {e}")
         raise
 
-    print("\n✓ All VDBs initialized successfully")
+    print("\nAll VDBs loaded successfully")
     print("="*80)
 
 
