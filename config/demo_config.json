@@ -1,0 +1,10 @@
+{
+  "demo_mode": true,
+  "mock_databases": {
+    "inventory_db": "data/databases/mock/mock_inventory.db",
+    "vendor_db": "data/databases/mock/mock_vendor.db"
+  },
+  "mock_upload_dir": "data/mock_images",
+  "skip_kg_ingestion": true,
+  "skip_vdb_ingestion": true
+}

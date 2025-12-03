@@ -518,7 +518,13 @@ async def upload_files(
         )
 
     # Create vendor-specific directory
-    vendor_dir = os.path.join(UPLOAD_DIR, current_user.username)
+    # In demo mode, use mock_images folder under data/
+    if DEMO_CONFIG.get("demo_mode", False):
+        base_upload_dir = Path(__file__).parent.parent / DEMO_CONFIG.get("mock_upload_dir", "data/mock_images")
+    else:
+        base_upload_dir = Path(UPLOAD_DIR)
+
+    vendor_dir = base_upload_dir / current_user.username
     os.makedirs(vendor_dir, exist_ok=True)
 
     uploaded_files = []
