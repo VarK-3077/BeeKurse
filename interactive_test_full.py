@@ -7,7 +7,7 @@ import os
 import time
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # Use actual databases from config (no environment overrides needed)
 # The config.py already points to the correct database paths:
@@ -24,6 +24,7 @@ from search_agent.orchestrator.chat_handler import ChatHandler
 from search_agent.database.sql_client import SQLClient
 from search_agent.database.vdb_client import MainVDBClient, PropertyVDBClient, RelationVDBClient
 from search_agent.database.kg_client import KGClient
+from scripts.database_operations.sql_extract import fetch_products_by_ids
 
 
 class TimedTestRunner:
@@ -136,6 +137,63 @@ class TimedTestRunner:
 
         print("  ✓ All databases found")
 
+    def _format_whatsapp_search_response(self, product_ids: List[str]) -> Dict[str, Any]:
+        """Format search response exactly as /process endpoint would send to WhatsApp"""
+        if not product_ids:
+            return {"text": "😔 Sorry, no products matched your search.", "images": []}
+
+        products = fetch_products_by_ids(product_ids)
+        top_products = [products[pid] for pid in product_ids[:4] if pid in products]
+
+        # Build text (same as strontium_api.py format_search_response)
+        lines = [f"🔍 Found {len(product_ids)} product(s):\n"]
+        for i, p in enumerate(top_products, 1):
+            name = p["prod_name"]
+            if len(name) > 40:
+                name = name[:40] + "..."
+            lines.extend([
+                f"{i}. *{name}*",
+                f"   ₹{p['price'] or 'N/A'} | ⭐{p['rating'] or 'N/A'}",
+                f"   Store: {p['store'] or 'Unknown'}",
+                f"   ID: {p['short_id']}\n"
+            ])
+        if len(product_ids) > 4:
+            lines.append(f"_... and {len(product_ids) - 4} more results_")
+        lines.extend(["\n💡 Ask about a product using its ID", 'Example: _"details of A3F1"_'])
+
+        return {
+            "text": "\n".join(lines),
+            "images": [{"url": p["image_url"], "caption": f"{p['prod_name']} (ID: {p['short_id']})"} for p in top_products],
+            "all_product_ids": product_ids  # Full list of ALL product IDs found
+        }
+
+    def _format_whatsapp_detail_response(self, parsed_dict: Dict, answer: str) -> Dict[str, Any]:
+        """Format detail response exactly as /process endpoint would send to WhatsApp"""
+        product_id = parsed_dict.get("product_id")
+        if not product_id:
+            return {"messages": [{"type": "text", "text": "❌ No product ID found."}]}
+
+        products = fetch_products_by_ids([product_id])
+        product = products.get(product_id)
+
+        if not product:
+            return {"messages": [{"type": "text", "text": f"❌ No product found for ID {product_id}"}]}
+
+        caption = f"📦 *Product Information: {product_id}*\n\n{answer}"
+
+        return {
+            "messages": [
+                {"type": "image", "url": product["image_url"]},
+                {"type": "text", "text": caption}
+            ],
+            "product_id": product_id,
+            "short_id": product.get("short_id")
+        }
+
+    def _format_whatsapp_chat_response(self, response: str) -> Dict[str, Any]:
+        """Format chat response exactly as /process endpoint would send to WhatsApp"""
+        return {"reply": response}
+
     def run_search_query(self, query: str, user_id: str = "default_user") -> Dict[str, Any]:
         """Run a search query with detailed timing"""
 
@@ -226,6 +284,15 @@ class TimedTestRunner:
                 else:
                     print(f"    {i}. Product {product_id} (details not found)")
 
+        # Stage 3: Show WhatsApp Response (Strontium /process endpoint output)
+        print("\n" + "-" * 80)
+        print("STAGE 3: WhatsApp Response (Strontium /process endpoint output)")
+        print("-" * 80)
+
+        whatsapp_response = self._format_whatsapp_search_response(all_product_ids)
+        print("\n[Final JSON to WhatsApp Bot]")
+        print(json.dumps(whatsapp_response, indent=2, ensure_ascii=False))
+
         # Total time
         total_time = time.time() - total_start
         self.timings['total'] = total_time
@@ -237,6 +304,7 @@ class TimedTestRunner:
             "parsed": parsed_dict,
             "product_ids": all_product_ids,
             "products": products_dict if all_product_ids else {},
+            "whatsapp_response": whatsapp_response,
             "timings": self.timings
         }
 
@@ -248,13 +316,23 @@ class TimedTestRunner:
         print("-" * 80)
 
         stage2_start = time.time()
-        details = self.detail_service.get_detail(parsed_dict)
+        # Use orchestrator.answer_detail_query like strontium_api.py does
+        answer = self.orchestrator.answer_detail_query(parsed_dict)
         stage2_time = time.time() - stage2_start
 
         self.timings['stage2_detail'] = stage2_time
 
-        print(f"\n[Detail Result] ({stage2_time:.3f}s)")
-        print(json.dumps(details, indent=2))
+        print(f"\n[Detail Answer] ({stage2_time:.3f}s)")
+        print(answer)
+
+        # Stage 3: Show WhatsApp Response (Strontium /process endpoint output)
+        print("\n" + "-" * 80)
+        print("STAGE 3: WhatsApp Response (Strontium /process endpoint output)")
+        print("-" * 80)
+
+        whatsapp_response = self._format_whatsapp_detail_response(parsed_dict, answer)
+        print("\n[Final JSON to WhatsApp Bot]")
+        print(json.dumps(whatsapp_response, indent=2, ensure_ascii=False))
 
         total_time = time.time() - total_start
         self.timings['total'] = total_time
@@ -264,7 +342,8 @@ class TimedTestRunner:
         return {
             "query_type": "detail",
             "parsed": parsed_dict,
-            "details": details,
+            "answer": answer,
+            "whatsapp_response": whatsapp_response,
             "timings": self.timings
         }
 
@@ -288,6 +367,15 @@ class TimedTestRunner:
         print(f"\n[Chat Response] ({stage2_time:.3f}s)")
         print(f"\n{response}\n")
 
+        # Stage 3: Show WhatsApp Response (Strontium /process endpoint output)
+        print("\n" + "-" * 80)
+        print("STAGE 3: WhatsApp Response (Strontium /process endpoint output)")
+        print("-" * 80)
+
+        whatsapp_response = self._format_whatsapp_chat_response(response)
+        print("\n[Final JSON to WhatsApp Bot]")
+        print(json.dumps(whatsapp_response, indent=2, ensure_ascii=False))
+
         total_time = time.time() - total_start
         self.timings['total'] = total_time
 
@@ -297,6 +385,7 @@ class TimedTestRunner:
             "query_type": "chat",
             "parsed": parsed_dict,
             "response": response,
+            "whatsapp_response": whatsapp_response,
             "timings": self.timings
         }
 

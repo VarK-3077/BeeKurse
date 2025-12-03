@@ -1,5 +1,6 @@
 import os
 import httpx
+import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Annotated, Optional, List
@@ -14,6 +15,7 @@ import uuid
 from datetime import datetime
 from fastapi import Form
 import json
+from pathlib import Path
 
 # -------------------- sql injector -----------------------
 import sys
@@ -23,6 +25,23 @@ from scripts.database_operations.sql_injector import add_subcategory_embedding_a
 from config.config import Config
 
 config = Config
+# ---------------------------------------------------------
+
+# -------------------- Demo Mode Config -------------------
+DEMO_CONFIG_PATH = Path(__file__).parent.parent / "config" / "demo_config.json"
+VENDOR_REGISTRY_PATH = Path(__file__).parent.parent / "data" / "vendor_data" / "vendor_registry.json"
+
+def load_demo_config():
+    """Load demo configuration from JSON file"""
+    try:
+        with open(DEMO_CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Demo config not found or invalid: {e}")
+        return {"demo_mode": False}
+
+DEMO_CONFIG = load_demo_config()
+print(f"🎭 Demo mode: {DEMO_CONFIG.get('demo_mode', False)}")
 # ---------------------------------------------------------
 
 
@@ -123,8 +142,111 @@ def verify_password(plain_password, hashed_password):
 def get_password_hash(password):
     return pwd_context.hash(password)
 
+def get_demo_db_path(db_type: str) -> str:
+    """Get the appropriate database path based on demo mode"""
+    if DEMO_CONFIG.get("demo_mode", False):
+        base_path = Path(__file__).parent.parent
+        if db_type == "vendor":
+            return str(base_path / DEMO_CONFIG["mock_databases"]["vendor_db"])
+        elif db_type == "inventory":
+            return str(base_path / DEMO_CONFIG["mock_databases"]["inventory_db"])
+    # Non-demo mode paths
+    if db_type == "vendor":
+        return str(Path(__file__).parent.parent / "data" / "databases" / "sql" / "vendor.db")
+    elif db_type == "inventory":
+        return config.VENDOR_TEST_DB_PATH if config.USE_VENDOR_TEST_DB else config.SQL_DB_PATH
+    return None
+
+def add_to_vendor_registry(phone: str):
+    """Add phone number to vendor_registry.json for WhatsApp validation"""
+    try:
+        # Normalize phone (remove spaces, dashes)
+        normalized = ''.join(c for c in phone if c.isdigit() or c == '+')
+        if normalized.startswith('+'):
+            normalized = normalized[1:]  # Remove leading +
+
+        # Load existing registry
+        if VENDOR_REGISTRY_PATH.exists():
+            with open(VENDOR_REGISTRY_PATH) as f:
+                registry = json.load(f)
+        else:
+            registry = {"registered": []}
+
+        # Add if not exists
+        if normalized not in registry["registered"]:
+            registry["registered"].append(normalized)
+            with open(VENDOR_REGISTRY_PATH, 'w') as f:
+                json.dump(registry, f, indent=2)
+            print(f"📱 Added {normalized} to vendor registry")
+        return True
+    except Exception as e:
+        print(f"Error updating vendor registry: {e}")
+        return False
+
+def create_vendor_in_sqlite(vendor_data: dict) -> dict:
+    """Create vendor in SQLite database (for demo mode)"""
+    db_path = get_demo_db_path("vendor")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    vendor_id = str(uuid.uuid4())
+    cursor.execute('''INSERT INTO vendors
+        (id, username, business_name, email, phone, business_type, address, description, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)''',
+        (vendor_id, vendor_data["username"], vendor_data["business_name"],
+         vendor_data["email"], vendor_data["phone"], vendor_data["business_type"],
+         vendor_data.get("address"), vendor_data.get("description"),
+         vendor_data["created_at"]))
+    conn.commit()
+    conn.close()
+
+    return {**vendor_data, "id": vendor_id}
+
+def get_vendor_from_sqlite(username: str) -> Optional[dict]:
+    """Get vendor from SQLite database (for demo mode)"""
+    db_path = get_demo_db_path("vendor")
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM vendors WHERE username = ?", (username,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+        return None
+    except Exception as e:
+        print(f"Error fetching vendor from SQLite: {e}")
+        return None
+
+def get_vendor_by_email_sqlite(email: str) -> Optional[dict]:
+    """Get vendor by email from SQLite database (for demo mode)"""
+    db_path = get_demo_db_path("vendor")
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM vendors WHERE email = ?", (email,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+        return None
+    except Exception as e:
+        print(f"Error fetching vendor by email from SQLite: {e}")
+        return None
+
 async def get_user_from_db(username: str):
-    """Fetch user from JSON Server"""
+    """Fetch user from JSON Server or SQLite (demo mode)"""
+    # Demo mode: use SQLite
+    if DEMO_CONFIG.get("demo_mode", False):
+        vendor = get_vendor_from_sqlite(username)
+        if vendor:
+            # Need to add hashed_password for auth - fetch from JSON Server as fallback
+            # For demo, we still use JSON Server for auth
+            pass
+
+    # Use JSON Server (primary)
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(f"{JSON_SERVER_URL}/users", params={"username": username})
@@ -263,7 +385,8 @@ async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
 @app.post("/register", response_model=VendorResponse)
 async def register(vendor: UserRegister):
     """Register a new vendor with complete business information"""
-    print(f"DEBUG: Registering vendor - {vendor.username}")
+    is_demo = DEMO_CONFIG.get("demo_mode", False)
+    print(f"DEBUG: Registering vendor - {vendor.username} (demo_mode={is_demo})")
 
     # Check if username already exists
     existing_user = await get_user_from_db(vendor.username)
@@ -287,8 +410,19 @@ async def register(vendor: UserRegister):
     vendor_dict["created_at"] = datetime.utcnow().isoformat()
     vendor_dict["is_active"] = True
 
-    # Create vendor in database
+    # Create vendor in JSON Server (needed for auth in both modes)
     created_vendor = await create_user_in_db(vendor_dict)
+
+    # Demo mode: also write to mock vendor.db
+    if is_demo:
+        try:
+            create_vendor_in_sqlite(vendor_dict)
+            print(f"🎭 Demo: Vendor saved to mock_vendor.db")
+        except Exception as e:
+            print(f"Warning: Could not save to mock vendor.db: {e}")
+
+    # Add to vendor registry for WhatsApp validation
+    add_to_vendor_registry(vendor.phone)
 
     # Return vendor response
     return VendorResponse(
@@ -444,40 +578,84 @@ async def upload_files(
         "stock": product.stock,
     }
 
-    # Determine which database to use
-    if config.USE_VENDOR_TEST_DB:
-        db_path = config.VENDOR_TEST_DB_PATH
-        print(f"🧪 Saving product to VENDOR TEST database: {db_path}")
-    else:
-        db_path = config.SQL_DB_PATH
-        print(f"📦 Saving product to MAIN database: {db_path}")
+    # Check demo mode
+    is_demo = DEMO_CONFIG.get("demo_mode", False)
 
-    # Save to SQL database with embeddings
-    saved_row = add_subcategory_embedding_and_save(complete_product, db_path=db_path)
-    complete_product["short_id"] = saved_row.get("short_id")
+    if is_demo:
+        # Demo mode: write to mock inventory DB, skip VDB/KG
+        db_path = get_demo_db_path("inventory")
+        print(f"🎭 Demo mode: Saving product to mock database: {db_path}")
 
-    # Save product to JSON server
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{JSON_SERVER_URL}/products",
-                json=complete_product
+        # Generate short_id manually (skip embedding)
+        import random
+        import string
+        short_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        complete_product["short_id"] = short_id
+
+        # Direct SQL insert (no embeddings in demo mode)
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute('''INSERT INTO product_table
+                (product_id, prod_name, store, category, subcategory, brand, colour,
+                 description, dimensions, imageid, price, quantity, quantityunit,
+                 rating, size, stock, short_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (complete_product["product_id"], complete_product["prod_name"],
+                 complete_product["store"], complete_product["category"],
+                 complete_product["subcategory"], complete_product["brand"],
+                 complete_product["colour"], complete_product.get("descrption", ""),
+                 complete_product["dimensions"], complete_product["imageid"],
+                 float(complete_product["price"]) if complete_product["price"] else 0,
+                 1, complete_product["qunatityunit"], 0,
+                 complete_product["size"], complete_product["stock"], short_id))
+            conn.commit()
+            conn.close()
+            print(f"🎭 Demo: Product saved with short_id={short_id}")
+        except Exception as e:
+            print(f"Error saving to mock DB: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save product: {str(e)}"
             )
-            response.raise_for_status()
-            saved_product = response.json()
-    except httpx.HTTPError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save product to database: {str(e)}"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error saving product: {str(e)}"
-        )
 
-    # TODO: Save complete_product to database
-    # TODO: Process files for vector database, knowledge graph, etc.
+        # Skip JSON Server in demo mode
+        print("🎭 Demo: Skipping JSON Server, KG, and VDB writes")
+
+    else:
+        # Normal mode: use configured database with embeddings
+        if config.USE_VENDOR_TEST_DB:
+            db_path = config.VENDOR_TEST_DB_PATH
+            print(f"🧪 Saving product to VENDOR TEST database: {db_path}")
+        else:
+            db_path = config.SQL_DB_PATH
+            print(f"📦 Saving product to MAIN database: {db_path}")
+
+        # Save to SQL database with embeddings
+        saved_row = add_subcategory_embedding_and_save(complete_product, db_path=db_path)
+        complete_product["short_id"] = saved_row.get("short_id")
+
+        # Save product to JSON server
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{JSON_SERVER_URL}/products",
+                    json=complete_product
+                )
+                response.raise_for_status()
+                saved_product = response.json()
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save product to database: {str(e)}"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error saving product: {str(e)}"
+            )
+
+    # Note: KG and VDB processing skipped in demo mode
 
     return {
         "message": "Product uploaded successfully",
@@ -559,10 +737,13 @@ async def get_my_products(
     current_user: Annotated[User, Depends(get_current_active_user)]
 ):
     """Get all products for the current vendor from the database"""
-    import sqlite3
 
-    # Determine which database to use
-    if config.USE_VENDOR_TEST_DB:
+    # Determine which database to use based on demo mode
+    is_demo = DEMO_CONFIG.get("demo_mode", False)
+    if is_demo:
+        db_path = get_demo_db_path("inventory")
+        print(f"🎭 Demo: Fetching products from mock database")
+    elif config.USE_VENDOR_TEST_DB:
         db_path = config.VENDOR_TEST_DB_PATH
     else:
         db_path = config.SQL_DB_PATH

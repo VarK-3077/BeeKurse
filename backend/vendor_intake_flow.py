@@ -26,6 +26,20 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from config.config import Config
 from search_agent.database.sql_client import SQLClient
 
+# -------------------- Demo Mode Config -------------------
+DEMO_CONFIG_PATH = Path(__file__).parent.parent / "config" / "demo_config.json"
+
+def load_demo_config():
+    """Load demo configuration from JSON file"""
+    try:
+        with open(DEMO_CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception as e:
+        return {"demo_mode": False}
+
+DEMO_CONFIG = load_demo_config()
+# ---------------------------------------------------------
+
 # Optional NVIDIA LLM import for intelligent parsing
 try:
     from langchain_nvidia_ai_endpoints import ChatNVIDIA
@@ -2009,9 +2023,18 @@ class VendorIntakeFlow:
     """Stateful flow manager for vendor intake sessions."""
 
     def __init__(self, sql_client: Optional[SQLClient] = None, registry: Optional[VendorRegistry] = None):
-        # Use vendor test database if configured
+        # Check demo mode
+        is_demo = DEMO_CONFIG.get("demo_mode", False)
+
+        # Use vendor test database if configured, or mock DB in demo mode
         if sql_client is None:
-            if config.USE_VENDOR_TEST_DB:
+            if is_demo:
+                # Demo mode: use mock inventory database
+                base_path = Path(__file__).parent.parent
+                mock_db_path = str(base_path / DEMO_CONFIG["mock_databases"]["inventory_db"])
+                print(f"🎭 Demo mode: Using MOCK database: {mock_db_path}")
+                self.sql_client = SQLClient(db_path=mock_db_path)
+            elif config.USE_VENDOR_TEST_DB:
                 print(f"Using VENDOR TEST database: {config.VENDOR_TEST_DB_PATH}")
                 self.sql_client = SQLClient(db_path=config.VENDOR_TEST_DB_PATH)
             else:
@@ -2029,6 +2052,9 @@ class VendorIntakeFlow:
 
         # File-based temporary storage for bulk processing
         self.bulk_temp_storage = BulkTempStorage(config.VENDOR_DATA_DIR)
+
+        # Store demo mode flag
+        self.demo_mode = is_demo
 
     # --------------------- Public API ---------------------
     def handle(
