@@ -15,11 +15,12 @@ PRODUCT_TABLE_NAME = "product_table"
 CONTACTS_TABLE_NAME = "store_contacts"
 
 
-
+# [CHANGE 1] Added 'gender' to the required columns list
 REQUIRED_FIELDS = [
     'brand', 'category', 'colour', 'descrption', 'dimensions', 'imageid',
     'price', 'prod_name', 'product_id', 'quantity', 'qunatityunit',
-    'rating', 'size', 'stock', 'store', 'subcategory', 'subcategoryid', 'short_id'
+    'rating', 'size', 'stock', 'store', 'subcategory', 'subcategoryid', 
+    'short_id', 'gender'
 ]
 
 
@@ -34,15 +35,10 @@ def add_subcategory_embedding_and_save(
     table_name: str = "product_table",
 ) -> Dict[str, Any]:
     """
-    1. Take a product JSON (dict or JSON string) with fields:
-       ['brand', 'category', 'colour', 'descrption', 'dimensions', 'imageid',
-        'price', 'prod_name', 'product_id', 'quantity', 'qunatityunit',
-        'rating', 'size', 'stock', 'store', 'subcategory', 'subcategoryid']
-    2. Recompute 'subcategoryid' using SentenceTransformer on 'subcategory'.
-       - If 'subcategoryid' was already present, it is REPLACED.
-    3. Ensure the SQLite table exists (CREATE TABLE IF NOT EXISTS ...)
-       with exactly these columns (all TEXT).
-    4. Insert a row into the SQLite table with exactly these columns.
+    1. Take a product JSON.
+    2. Extract 'gender' from 'otherproperties' if it exists.
+    3. Recompute 'subcategoryid'.
+    4. Insert into SQLite.
     """
 
     # ---- Parse input JSON ----
@@ -54,6 +50,21 @@ def add_subcategory_embedding_and_save(
     subcat = raw.get("subcategory")
     if not subcat:
         raise ValueError("Input JSON must contain a non-empty 'subcategory' field")
+
+    # [CHANGE 2] Extract gender from otherproperties if explicitly missing at top level
+    if "gender" not in raw:
+        other_props = raw.get("otherproperties")
+        
+        # Parse otherproperties if it is a JSON string
+        if isinstance(other_props, str):
+            try:
+                other_props = json.loads(other_props)
+            except:
+                other_props = {}
+        
+        # If it's a dict, try to get gender
+        if isinstance(other_props, dict):
+            raw["gender"] = other_props.get("gender")
 
     # ---- Generate short_id if not provided ----
     if not raw.get("short_id"):
@@ -112,8 +123,6 @@ def add_subcategory_embedding_and_save(
     return row
 
 
-
-
 def load_store_contacts_to_db(
     csv_path: str,
     db_path: str = DB_PATH, 
@@ -150,4 +159,3 @@ def load_store_contacts_to_db(
     conn.close()
 
     print(f"Inserted {len(rows)} rows into '{table_name}' table.")
-

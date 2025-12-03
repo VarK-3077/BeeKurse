@@ -16,16 +16,6 @@ def fetch_products_by_ids(
     """
     Given a list of product_id values, fetch the matching rows
     and return a dictionary keyed by product_id.
-
-    Each product dict includes:
-        - product_id
-        - short_id
-        - prod_name
-        - price
-        - rating
-        - store
-        - image_url  (dummy for now)
-        - raw: full DB row
     """
 
     if not product_ids:
@@ -67,12 +57,10 @@ def fetch_products_by_ids(
             continue
 
         # ---- Image URL mapping (dummy for now) ----
-        # image_url = f"{DUMMY_IMG_BASE}/{pid}.jpg"
         image_id = row_dict.get("imageid")
         image_url = f"https://my-img-bucket-123.s3.ap-south-1.amazonaws.com/{image_id}"
 
         print(f"DEBUG: {image_url}")
-        # image_url = "https://plus.unsplash.com/premium_photo-1762541871245-ffaf4ab5da47?w=600&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxmZWF0dXJlZC1waG90b3MtZmVlZHwyfHx8ZW58MHx8fHx8"
 
         # ---- Clean minimal object for WhatsApp backend ----
         results[pid] = {
@@ -82,6 +70,7 @@ def fetch_products_by_ids(
             "price": row_dict.get("price"),
             "rating": row_dict.get("rating"),
             "store": row_dict.get("store"),
+            "gender": row_dict.get("gender"), # [CHANGE 3] Added gender to output
             "image_url": image_url,
             "raw": row_dict,     # full DB row in case you need anything else
         }
