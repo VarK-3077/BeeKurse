@@ -414,7 +414,7 @@ def apply_inventory_changes(vendor_phone: str, parsed_items: Dict[str, List[Dict
                 results["errors"].append(f"Error adding {item['name']}: {str(e)}")
 
         # Build summary message
-        summary_lines = ["✅ *Inventory Changes Applied*\n"]
+        summary_lines = ["*Inventory Changes Applied*\n"]
 
         if results["updated"]:
             summary_lines.append(f"*Updated ({len(results['updated'])}):*")
@@ -436,7 +436,7 @@ def apply_inventory_changes(vendor_phone: str, parsed_items: Dict[str, List[Dict
         if results["errors"]:
             summary_lines.append(f"*Errors ({len(results['errors'])}):*")
             for error in results["errors"]:
-                summary_lines.append(f"  ⚠️ {error}")
+                summary_lines.append(f"  [!] {error}")
 
         return True, "\n".join(summary_lines)
 
@@ -478,7 +478,7 @@ def handle_inventory_confirmation(vendor_phone: str, command: str) -> Optional[s
 
     elif command_lower in ["cancel", "no", "n", "discard"]:
         _pending_inventory_update = None
-        return "❌ Inventory update cancelled."
+        return "Inventory update cancelled."
 
     return None
 
@@ -522,7 +522,7 @@ def process_vendor_inventory_image(file_path: str, vendor_phone: str) -> Tuple[b
             return False, f"Could not parse any inventory items from the image.\n\nExtracted text:\n{ocr_text}", {}
 
         # Build summary message
-        summary_lines = ["📋 *Inventory List Detected*\n"]
+        summary_lines = ["*Inventory List Detected*\n"]
 
         if update_count > 0:
             summary_lines.append(f"*Update ({update_count} items):*")

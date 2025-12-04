@@ -181,14 +181,14 @@ if __name__ == "__main__":
     import uvicorn
 
     print("\n" + "=" * 60)
-    print("🛒 Starting BeeKurse Cart & Wishlist Server")
+    print("Starting BeeKurse Cart & Wishlist Server")
     print("=" * 60)
-    print(f"📍 API: http://localhost:8002")
-    print(f"🌐 Cart page: http://localhost:8002/view/cart/{{user_id}}")
-    print(f"❤️  Wishlist: http://localhost:8002/view/wishlist/{{user_id}}")
-    print(f"📱 WhatsApp: {WHATSAPP_NUMBER or 'Not configured'}")
+    print(f"API: http://localhost:8002")
+    print(f"Cart page: http://localhost:8002/view/cart/{{user_id}}")
+    print(f"Wishlist: http://localhost:8002/view/wishlist/{{user_id}}")
+    print(f"WhatsApp: {WHATSAPP_NUMBER or 'Not configured'}")
     print("=" * 60)
-    print("\n💡 To expose via ngrok: ngrok http 8002")
+    print("\nTo expose via ngrok: ngrok http 8002")
     print("   Then set URL: POST /admin/set-ngrok-url?url=https://xxx.ngrok.io")
     print("=" * 60 + "\n")
 

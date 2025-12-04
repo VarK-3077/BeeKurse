@@ -4,6 +4,7 @@ import json
 import uuid
 import hashlib
 import re
+import base64
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -13,20 +14,55 @@ import io
 import cv2
 import numpy as np
 from PIL import Image
-import torch
+
+# Optional torch import - only needed for local model
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+    torch = None
 
 try:
     import fitz as pymupdf
 except Exception as e:
     raise ImportError(f"PyMuPDF (pip install PyMuPDF) is required. Import error: {e}")
 
+# Optional transformers import - only needed for local model
 try:
     from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoModelForCausalLM
+    HAS_TRANSFORMERS = True
+except ImportError:
+    HAS_TRANSFORMERS = False
+
+# Optional NVIDIA API import
+try:
+    from langchain_nvidia_ai_endpoints import ChatNVIDIA
+    from langchain_core.messages import HumanMessage
+    NVIDIA_AVAILABLE = True
+except ImportError:
+    NVIDIA_AVAILABLE = False
+    ChatNVIDIA = None
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+# Optional olmocr import - fallback to custom prompt if not available
+try:
     from olmocr.prompts import build_no_anchoring_v4_yaml_prompt
-except ImportError as e:
-    print(f"[ERROR] Missing required imports: {e}")
-    print("Install: pip install 'olmocr>=0.4.0' 'transformers>=4.48.3' torch torchvision PyMuPDF pillow opencv-python numpy")
-    raise
+    HAS_OLMOCR = True
+except ImportError:
+    HAS_OLMOCR = False
+
+    def build_no_anchoring_v4_yaml_prompt(page_num: int = 0, total_pages: int = 1) -> str:
+        """Fallback OCR prompt when olmocr is not available."""
+        return """Extract all text from this image. Include:
+- All visible text, numbers, and symbols
+- Maintain the original layout and structure
+- Preserve any headings, lists, or formatting
+
+Output the extracted text exactly as it appears in the image."""
 
 
 # ==================== CONFIGURATION ====================
@@ -46,6 +82,10 @@ class Config:
     # Models
     OCR_MODEL = "allenai/olmOCR-2-7B-1025-FP8"
     REASONING_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+
+    # NVIDIA Vision Model for OCR (lightweight API-based)
+    NVIDIA_VISION_MODEL = "meta/llama-3.2-11b-vision-instruct"  # Available VLM model
+    USE_NVIDIA_OCR = os.getenv("USE_NVIDIA_LLM", "True").lower() == "true"
 
     # Token caps (conservative)
     OCR_MAX_NEW_TOKENS = 1024
@@ -208,32 +248,41 @@ class OLMOCRProcessor:
         else:
             processor_model = "Qwen/Qwen2-VL-7B-Instruct"
 
+        # Check GPU memory - need at least 8GB for 7B model
         use_cuda = torch.cuda.is_available()
-        dtype = torch.float16 if use_cuda else torch.float32
+        if use_cuda:
+            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if gpu_memory_gb < 8:
+                print(f"[INFO] GPU memory ({gpu_memory_gb:.1f}GB) insufficient for 7B model, using CPU offload")
+                # Use CPU with offloading for low-memory GPUs
+                device_map = "cpu"
+                dtype = torch.float32
+            else:
+                device_map = "auto"
+                dtype = torch.float16
+        else:
+            device_map = "cpu"
+            dtype = torch.float32
 
         try:
+            actual_model = model_name
             if "FP8" in model_name:
-                try:
-                    cls._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                        model_name, torch_dtype=dtype, device_map="auto", trust_remote_code=True
-                    )
-                    cls._model_name = model_name
-                except Exception:
-                    fallback = model_name.replace("-FP8", "")
-                    cls._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                        fallback, torch_dtype=dtype, device_map="auto", trust_remote_code=True
-                    )
-                    cls._model_name = fallback
-            else:
-                cls._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                    model_name, torch_dtype=dtype, device_map="auto", trust_remote_code=True
-                )
-                cls._model_name = model_name
+                # FP8 not supported on CPU, use regular model
+                actual_model = model_name.replace("-FP8", "")
+
+            cls._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                actual_model,
+                torch_dtype=dtype,
+                device_map=device_map,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True
+            )
+            cls._model_name = actual_model
 
             cls._processor = AutoProcessor.from_pretrained(processor_model, trust_remote_code=True)
 
             if debug:
-                print(f"[INFO] OCR model loaded: {cls._model_name}")
+                print(f"[INFO] OCR model loaded: {cls._model_name} (device_map={device_map})")
 
         except Exception as e:
             print(f"[ERROR] Failed to initialize OCR model: {e}")
@@ -258,6 +307,11 @@ class OLMOCRProcessor:
         cls._model_name = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    @classmethod
+    def is_initialized(cls) -> bool:
+        """Check if the OCR processor is initialized."""
+        return cls._model is not None and cls._processor is not None
 
 
 # ==================== REASONING MODEL MANAGEMENT ====================
@@ -369,9 +423,86 @@ def safe_generate(model, *args, max_new_tokens: int = 256, device: Optional[torc
             raise
 
 
+# ==================== NVIDIA API OCR ====================
+
+def extract_text_with_nvidia_api(image_path: str, debug: bool = False) -> str:
+    """Extract text from image using NVIDIA Vision API (lightweight, fast)."""
+    if not NVIDIA_AVAILABLE:
+        raise RuntimeError("NVIDIA API not available. Install langchain-nvidia-ai-endpoints.")
+
+    if debug:
+        print(f"[INFO] Extracting text with NVIDIA Vision API from: {image_path}")
+
+    # Load and encode image as base64
+    with open(image_path, "rb") as f:
+        image_data = f.read()
+    image_b64 = base64.b64encode(image_data).decode("utf-8")
+
+    # Determine image mime type
+    ext = os.path.splitext(image_path)[1].lower()
+    mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
+    mime_type = mime_map.get(ext, "image/jpeg")
+
+    # Create NVIDIA vision model client
+    llm = ChatNVIDIA(
+        model=Config.NVIDIA_VISION_MODEL,
+        api_key=os.getenv("NVIDIA_API_KEY"),
+        temperature=0.1,
+        max_tokens=1024
+    )
+
+    # OCR prompt for inventory lists
+    ocr_prompt = """Extract ALL text from this image exactly as it appears. This is likely an inventory list or document.
+
+For each item/product you see, extract:
+- Product name
+- Price (look for Rs, ₹, rupees, or numbers with /pack, /kg, /pcs)
+- Quantity or stock amount
+- Any other details (size, brand, etc.)
+
+Preserve the structure and formatting. Output the text exactly as written, including any section headers like "Update", "Add", "Delete" etc.
+
+Be very careful to read handwritten text accurately."""
+
+    # Create message with image
+    message = HumanMessage(
+        content=[
+            {"type": "text", "text": ocr_prompt},
+            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}}
+        ]
+    )
+
+    try:
+        response = llm.invoke([message])
+        extracted_text = response.content if hasattr(response, 'content') else str(response)
+
+        if debug:
+            print(f"[INFO] NVIDIA OCR extracted {len(extracted_text)} chars")
+            print(f"[DEBUG] Extracted text preview: {extracted_text[:500]}")
+
+        return extracted_text
+
+    except Exception as e:
+        print(f"[ERROR] NVIDIA Vision API OCR failed: {e}")
+        raise
+
+
 # ==================== OCR: extract text from image ====================
 
 def extract_text_from_image(image_path: str, debug: bool = False) -> str:
+    """Extract text from image - uses NVIDIA API if available, falls back to local model."""
+
+    # Prefer NVIDIA API for speed and reliability
+    if Config.USE_NVIDIA_OCR and NVIDIA_AVAILABLE:
+        try:
+            return extract_text_with_nvidia_api(image_path, debug=debug)
+        except Exception as e:
+            print(f"[WARN] NVIDIA OCR failed: {e}, falling back to local model")
+
+    # Fall back to local model (slow, requires GPU/high RAM)
+    if not HAS_TRANSFORMERS or not HAS_TORCH:
+        raise RuntimeError("Neither NVIDIA API nor local transformers available for OCR")
+
     processor = OLMOCRProcessor.get_processor()
     model = OLMOCRProcessor.get_model()
 
@@ -828,6 +959,395 @@ def extract_structured_data(extracted_text: str, image_filenames: List[str],
             "product_id": generate_product_id(),
             "rating": "",
             "stock": ""
+        }
+
+
+# ==================== INVENTORY LIST EXTRACTION ====================
+
+def create_inventory_list_prompt(extracted_text: str) -> str:
+    """Create a prompt for extracting multiple products from an inventory list."""
+
+    example_input = """
+    Product List:
+    1. Cotton T-Shirt - Rs 299/piece - Stock: 50 - Colors: Red, Blue
+    2. Denim Jeans - Rs 899 - Stock: 30 - Size: M, L, XL
+    3. Matchbox - 15/2packets - Stock: 100
+    4. Rice - 48/kg - 100kg
+    """
+
+    example_output = {
+        "is_inventory_list": True,
+        "products": [
+            {
+                "prod_name": "Cotton T-Shirt",
+                "price": "299",
+                "quantity": "1",
+                "unit": "piece",
+                "stock": "50",
+                "colour": "Red, Blue",
+                "category": "Clothing",
+                "subcategory": "T-Shirt"
+            },
+            {
+                "prod_name": "Denim Jeans",
+                "price": "899",
+                "quantity": "1",
+                "unit": "pc",
+                "stock": "30",
+                "size": "M, L, XL",
+                "category": "Clothing",
+                "subcategory": "Jeans"
+            },
+            {
+                "prod_name": "Matchbox",
+                "price": "15",
+                "quantity": "2",
+                "unit": "packets",
+                "stock": "100",
+                "category": "Household",
+                "subcategory": "Matchbox"
+            },
+            {
+                "prod_name": "Rice",
+                "price": "48",
+                "quantity": "1",
+                "unit": "kg",
+                "stock": "100",
+                "category": "Grocery",
+                "subcategory": "Rice"
+            }
+        ]
+    }
+
+    prompt = f"""
+You are an expert at analyzing product inventory lists and documents. Analyze the EXTRACTED TEXT and determine:
+1. Is this an inventory list with multiple products? (as opposed to a single product description or product photo)
+2. If yes, extract ALL products from the list.
+
+Output a JSON object with this structure:
+{{
+    "is_inventory_list": true/false,
+    "products": [
+        {{
+            "prod_name": "product name",
+            "price": "price without currency symbol (just the number)",
+            "quantity": "quantity per unit price (e.g., if price is 15/2packets, quantity is 2)",
+            "unit": "unit type (e.g., kg, piece, pc, packets, box, etc.)",
+            "stock": "stock/inventory quantity (just number)",
+            "size": "available sizes",
+            "colour": "available colors",
+            "brand": "brand name if mentioned",
+            "category": "inferred category",
+            "subcategory": "inferred subcategory",
+            "description": "any additional description"
+        }},
+        ...more products...
+    ]
+}}
+
+CRITICAL RULES FOR PRICE/QUANTITY/UNIT EXTRACTION:
+- Price format "15/2packets" means: price=15, quantity=2, unit=packets
+- Price format "48/kg" means: price=48, quantity=1, unit=kg
+- Price format "Rs 500/piece" means: price=500, quantity=1, unit=piece
+- Price format "₹10/0.5kg" means: price=10, quantity=0.5, unit=kg
+- Always extract the NUMBER after "/" as quantity and the WORD as unit
+- If no "/" in price, assume quantity=1 and unit=pc (piece)
+
+Other Rules:
+- Output ONLY valid JSON. No markdown, no explanation.
+- Set is_inventory_list=true ONLY if text contains multiple distinct products (more than 1)
+- Extract price as number only (remove Rs, ₹, rupees symbols)
+- Extract stock as numbers only
+- If a product appears to be marked for deletion (crossed out, "remove", "delete", etc.), add "action": "delete"
+- If a product appears to be an update (has "update", "change", "modify"), add "action": "update"
+- Otherwise, assume "action": "add" for new products
+- Infer category/subcategory from product name if not explicit
+
+EXAMPLE INPUT:
+{example_input}
+
+EXAMPLE OUTPUT:
+{json.dumps(example_output, indent=2)}
+
+EXTRACTED TEXT:
+{extracted_text}
+
+Now output ONLY the JSON:
+""".strip()
+
+    # Truncate if too long
+    if len(prompt) > Config.REASONING_MAX_PROMPT_CHARS * 2:  # Allow larger for lists
+        prompt = prompt[:Config.REASONING_MAX_PROMPT_CHARS * 2] + "\n\n[... text truncated ...]"
+
+    return prompt
+
+
+def extract_inventory_list_with_nvidia(extracted_text: str, debug: bool = False) -> Dict[str, Any]:
+    """Extract inventory list using NVIDIA API (fast, no local model needed)."""
+    if not NVIDIA_AVAILABLE:
+        raise RuntimeError("NVIDIA API not available")
+
+    if debug:
+        print("[INFO] Extracting inventory list with NVIDIA API...")
+
+    # Use NVIDIA LLM for structured extraction
+    llm = ChatNVIDIA(
+        model="meta/llama-3.1-70b-instruct",  # Use text model for JSON extraction
+        api_key=os.getenv("NVIDIA_API_KEY"),
+        temperature=0.0,
+        max_tokens=2048
+    )
+
+    prompt = create_inventory_list_prompt(extracted_text or "")
+
+    try:
+        response = llm.invoke(prompt)
+        response_text = response.content if hasattr(response, 'content') else str(response)
+
+        if debug:
+            print(f"[DEBUG] NVIDIA response: {response_text[:1000]}")
+
+        # Parse JSON response
+        cleaned = response_text.strip()
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'```$', '', cleaned, flags=re.IGNORECASE).strip()
+
+        m = re.search(r'(\{[\s\S]*\})', cleaned)
+        if m:
+            json_str = m.group(1)
+        else:
+            json_str = cleaned
+
+        result = json.loads(json_str)
+
+        if not isinstance(result, dict):
+            return {"is_inventory_list": False, "products": []}
+
+        is_list = result.get("is_inventory_list", False)
+        products = result.get("products", [])
+
+        if not isinstance(products, list):
+            products = []
+
+        # Add product_id and default action to each product
+        for prod in products:
+            if not prod.get("product_id"):
+                prod["product_id"] = generate_product_id()
+            if not prod.get("action"):
+                prod["action"] = "add"
+
+        return {
+            "is_inventory_list": is_list and len(products) > 0,
+            "products": products
+        }
+
+    except Exception as e:
+        if debug:
+            print(f"[ERROR] NVIDIA inventory extraction failed: {e}")
+        raise
+
+
+def extract_inventory_list(extracted_text: str, debug: bool = False) -> Dict[str, Any]:
+    """
+    Extract multiple products from an inventory list.
+    Uses NVIDIA API if available, falls back to local model.
+
+    Returns:
+        {
+            "is_inventory_list": bool,
+            "products": [
+                {
+                    "prod_name": str,
+                    "price": str,
+                    "stock": str,
+                    "action": "add"|"update"|"delete",
+                    ...other fields
+                },
+                ...
+            ]
+        }
+    """
+    # Prefer NVIDIA API for speed
+    if Config.USE_NVIDIA_OCR and NVIDIA_AVAILABLE:
+        try:
+            return extract_inventory_list_with_nvidia(extracted_text, debug=debug)
+        except Exception as e:
+            print(f"[WARN] NVIDIA extraction failed: {e}, falling back to local model")
+
+    # Fall back to local model
+    if not HAS_TRANSFORMERS or not HAS_TORCH:
+        raise RuntimeError("Neither NVIDIA API nor local transformers available")
+
+    model = ReasoningModelProcessor.get_model()
+    tokenizer = ReasoningModelProcessor.get_tokenizer()
+    device = next(model.parameters()).device
+
+    if debug:
+        print("[INFO] Extracting inventory list with reasoning model...")
+
+    prompt = create_inventory_list_prompt(extracted_text or "")
+
+    messages = [
+        {"role": "system", "content": "You are a precise JSON extraction system for inventory lists. Output only valid JSON."},
+        {"role": "user", "content": prompt}
+    ]
+
+    if hasattr(tokenizer, "apply_chat_template"):
+        try:
+            text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        except Exception:
+            text = _messages_to_text_fallback(messages)
+    else:
+        text = _messages_to_text_fallback(messages)
+
+    max_model_len = getattr(tokenizer, "model_max_length", 2048)
+    max_input_len = max(1, min(max_model_len - 64, int(max_model_len * 0.85)))
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_input_len)
+    input_ids = inputs["input_ids"].to(device)
+    attention_mask = inputs.get("attention_mask")
+    if attention_mask is not None:
+        attention_mask = attention_mask.to(device)
+
+    try:
+        outputs = safe_generate(
+            model,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=Config.REASONING_MAX_NEW_TOKENS * 2,  # Allow more tokens for lists
+            temperature=0.0,
+            do_sample=False,
+            pad_token_id=getattr(tokenizer, "pad_token_id", None) or getattr(tokenizer, "eos_token_id", None),
+            eos_token_id=getattr(tokenizer, "eos_token_id", None),
+        )
+    except Exception as e:
+        print(f"[ERROR] Inventory list extraction failed: {e}")
+        return {"is_inventory_list": False, "products": []}
+
+    prompt_length = input_ids.shape[1] if input_ids is not None else 0
+
+    try:
+        if prompt_length > 0:
+            gen_ids = outputs[0][prompt_length:]
+            response = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+        else:
+            response = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+    except Exception:
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+
+    if debug:
+        print(f"[DEBUG] Inventory list response (first 1500 chars): {response[:1500]}")
+
+    # Parse JSON response
+    try:
+        cleaned = response.strip()
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'```$', '', cleaned, flags=re.IGNORECASE).strip()
+
+        m = re.search(r'(\{[\s\S]*\})', cleaned)
+        if m:
+            json_str = m.group(1)
+        else:
+            json_str = cleaned
+
+        result = json.loads(json_str)
+
+        # Validate and normalize result
+        if not isinstance(result, dict):
+            return {"is_inventory_list": False, "products": []}
+
+        is_list = result.get("is_inventory_list", False)
+        products = result.get("products", [])
+
+        if not isinstance(products, list):
+            products = []
+
+        # Add product_id and default action to each product
+        for prod in products:
+            if not prod.get("product_id"):
+                prod["product_id"] = generate_product_id()
+            if not prod.get("action"):
+                prod["action"] = "add"
+
+        return {
+            "is_inventory_list": is_list and len(products) > 0,
+            "products": products
+        }
+
+    except Exception as e:
+        if debug:
+            print(f"[ERROR] Failed to parse inventory list JSON: {e}")
+            print(f"[ERROR] Raw response: {response[:1000]}")
+        return {"is_inventory_list": False, "products": []}
+
+
+def process_inventory_image(image_path: str, debug: bool = False) -> Dict[str, Any]:
+    """
+    Process an image and determine if it's a single product or inventory list.
+
+    Returns:
+        {
+            "type": "product_image" | "inventory_list" | "unknown",
+            "data": single product dict OR list of products
+        }
+    """
+    try:
+        # Check if we can use NVIDIA API (preferred - no local model needed)
+        use_nvidia = Config.USE_NVIDIA_OCR and NVIDIA_AVAILABLE
+
+        # Only initialize local OCR processor if NVIDIA API not available
+        if not use_nvidia:
+            if not OLMOCRProcessor.is_initialized():
+                if debug:
+                    print("[INFO] Auto-initializing OCR processor...")
+                OLMOCRProcessor.initialize(model_name=Config.OCR_MODEL, debug=debug)
+
+        # First, extract text from the image
+        preprocessed = preprocess_image_for_ocr(image_path, debug=debug)
+        extracted_text = extract_text_from_image(preprocessed, debug=debug)
+
+        # Clean up temp file
+        try:
+            os.remove(preprocessed)
+        except Exception:
+            pass
+
+        # Check if minimal text (product image)
+        if is_minimal_text(extracted_text):
+            return {
+                "type": "product_image",
+                "data": None  # Image should be saved, not OCR'd
+            }
+
+        # Try to extract as inventory list first
+        list_result = extract_inventory_list(extracted_text, debug=debug)
+
+        if list_result.get("is_inventory_list") and len(list_result.get("products", [])) > 1:
+            return {
+                "type": "inventory_list",
+                "data": list_result["products"]
+            }
+
+        # Fall back to single product extraction
+        single_product = extract_structured_data(extracted_text, [], debug=debug)
+
+        if single_product.get("prod_name"):
+            return {
+                "type": "single_product",
+                "data": single_product
+            }
+
+        return {
+            "type": "unknown",
+            "data": None
+        }
+
+    except Exception as e:
+        if debug:
+            print(f"[ERROR] process_inventory_image failed: {e}")
+        return {
+            "type": "error",
+            "data": None,
+            "error": str(e)
         }
 
 

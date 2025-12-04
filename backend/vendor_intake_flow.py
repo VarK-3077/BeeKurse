@@ -176,6 +176,56 @@ Output only one word: YES, NO, or UNKNOWN"""
         return False
 
 
+# ==================== Empty Inventory Intent Detection ====================
+
+# Quick patterns for obvious empty inventory commands
+_QUICK_EMPTY_INVENTORY = {
+    "empty inventory", "clear inventory", "delete all", "remove all",
+    "empty stock", "clear stock", "delete all products", "remove all products",
+    "wipe inventory", "wipe stock", "reset inventory", "clear all",
+    "delete everything", "remove everything", "clear everything"
+}
+
+
+def _is_empty_inventory_intent(text: str) -> bool:
+    """
+    Check if the message indicates intent to empty/clear entire inventory.
+    Uses quick pattern matching first, then falls back to LLM for ambiguous messages.
+    """
+    normalized = text.lower().strip()
+
+    # Quick pattern match for exact matches
+    if normalized in _QUICK_EMPTY_INVENTORY:
+        return True
+
+    # Check for partial matches (e.g., "please empty inventory" or "I want to clear all")
+    for pattern in _QUICK_EMPTY_INVENTORY:
+        if pattern in normalized:
+            return True
+
+    # LLM fallback for ambiguous messages like "start fresh", "wipe everything clean"
+    llm = _get_intent_llm_client()
+    if llm is None:
+        return False
+
+    try:
+        prompt = f"""Classify if this message indicates the user wants to empty/clear/delete their ENTIRE inventory.
+Message: "{text}"
+
+Rules:
+- If user wants to delete ALL products/inventory -> output: YES
+- If user wants to delete specific products or do something else -> output: NO
+- If unclear -> output: NO
+
+Output only: YES or NO"""
+
+        response = llm.invoke(prompt)
+        return response.content.strip().upper() == "YES"
+    except Exception as e:
+        print(f"LLM empty inventory intent error: {e}")
+        return False
+
+
 # ==================== LLM-Based Product Parser ====================
 
 VENDOR_PRODUCT_PARSER_PROMPT = """You are a product information extraction tool for a vendor inventory system.
@@ -1396,6 +1446,346 @@ def _ocr_data_to_payload(ocr_data: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def _parse_inventory_edits_with_llm(message: str, operations: Dict[str, List]) -> List[Dict[str, Any]]:
+    """
+    Parse user's inline edit commands using LLM.
+
+    Supports editing all 4 main fields: name, price, unit, stock
+    Also supports any extra fields that may be in the product JSON.
+
+    Example inputs:
+        "1 stock is 100"
+        "3 price is 50"
+        "1 name is Maggi"
+        "2 unit is kg"
+        "1 stock is 100\n4 stock is 16\n5 stock is 11"
+
+    Returns list of edits:
+        [{"index": 1, "field": "stock", "value": 100}, ...]
+    """
+    try:
+        from langchain_nvidia_ai_endpoints import ChatNVIDIA
+        import json
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+
+        # Build product context with all fields
+        all_products = []
+        to_add = operations.get("to_add", [])
+        to_update = operations.get("to_update", [])
+
+        for i, p in enumerate(to_add, 1):
+            name = p.get('prod_name', 'Unknown')
+            price = p.get('price', '?')
+            unit = p.get('unit', 'pc')
+            stock = p.get('stock', '?')
+            all_products.append(f"{i}. {name} - Price: ₹{price}/{unit}, Stock: {stock}")
+
+        for i, p in enumerate(to_update, len(to_add) + 1):
+            name = p.get('prod_name', 'Unknown')
+            price = p.get('price', '?')
+            unit = p.get('unit', 'pc')
+            stock = p.get('stock', '?')
+            all_products.append(f"{i}. {name} - Price: ₹{price}/{unit}, Stock: {stock}")
+
+        product_list = "\n".join(all_products)
+
+        prompt = f"""You are parsing inventory edit commands. The user wants to modify product details before confirming.
+
+Current products:
+{product_list}
+
+User's edit message:
+{message}
+
+Parse the user's message and extract ALL edits. The user may use various formats like:
+- "1 stock is 100" or "1 stock 100" (set stock of product 1 to 100)
+- "3 price is 50" or "3 price 50" (set price of product 3 to 50)
+- "1 name is Maggi" (change product name to Maggi)
+- "2 unit is kg" (change unit to kg)
+- "1 stock 100, 4 stock 16, 5 stock 11" (multiple edits on one line)
+- Multiple lines with edits
+
+Common field names to recognize:
+- name/product name/prod_name -> "prod_name"
+- price/cost/rate -> "price"
+- unit/per -> "unit" (values like: pc, pcs, piece, kg, g, L, ml, packet, pack, box, dozen)
+- stock/qty/quantity/count -> "stock"
+
+You can also infer extra fields if the user mentions them (like "1 category is snacks" -> field: "category").
+
+Return ONLY a valid JSON array of edits. Each edit should have:
+- "index": the product number (1-based integer)
+- "field": the field name to edit (use internal names: "prod_name", "price", "unit", "stock", or any extra field)
+- "value": the new value (number for price/stock, string for name/unit)
+
+Example outputs:
+[{{"index": 1, "field": "stock", "value": 100}}, {{"index": 4, "field": "prod_name", "value": "Maggi"}}]
+[{{"index": 2, "field": "unit", "value": "kg"}}, {{"index": 2, "field": "price", "value": 50}}]
+
+If the message is NOT an edit command (like "yes", "no", "confirm", "cancel"), return an empty array: []
+
+Return ONLY the JSON array, no other text or explanation."""
+
+        llm = ChatNVIDIA(
+            model="meta/llama-3.1-70b-instruct",
+            api_key=os.getenv("NVIDIA_API_KEY"),
+            temperature=0.1,
+            max_tokens=1000
+        )
+
+        response = llm.invoke(prompt)
+        content = response.content.strip()
+
+        print(f"LLM edit response: {content}")
+
+        # Try to extract JSON from response
+        # Handle cases where LLM might wrap JSON in markdown code blocks
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+
+        if content.startswith("["):
+            edits = json.loads(content)
+            # Validate edits
+            valid_edits = []
+            for edit in edits:
+                if isinstance(edit, dict) and "index" in edit and "field" in edit and "value" in edit:
+                    try:
+                        field = str(edit["field"]).lower()
+                        value = edit["value"]
+
+                        # Convert value based on field type
+                        if field in ["price"]:
+                            value = float(value)
+                        elif field in ["stock"]:
+                            value = int(float(value))  # Handle "100.0" -> 100
+                        else:
+                            value = str(value)  # name, unit, and any extra fields are strings
+
+                        valid_edits.append({
+                            "index": int(edit["index"]),
+                            "field": field,
+                            "value": value
+                        })
+                    except (ValueError, TypeError) as e:
+                        print(f"Skipping invalid edit: {edit}, error: {e}")
+                        continue
+            return valid_edits
+
+        return []
+
+    except Exception as e:
+        print(f"Error parsing inventory edits: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+
+def _apply_edits_to_operations(operations: Dict[str, List], edits: List[Dict[str, Any]]) -> Dict[str, List]:
+    """Apply parsed edits to the operations dict."""
+    to_add = operations.get("to_add", [])
+    to_update = operations.get("to_update", [])
+
+    for edit in edits:
+        idx = edit["index"] - 1  # Convert to 0-based
+        field = edit["field"]
+        value = edit["value"]
+
+        # Check if index is in to_add
+        if idx < len(to_add):
+            to_add[idx][field] = value
+        # Check if index is in to_update
+        elif idx < len(to_add) + len(to_update):
+            update_idx = idx - len(to_add)
+            to_update[update_idx][field] = value
+
+    return operations
+
+
+# ==================== INVENTORY LIST PROCESSING ====================
+
+def _process_inventory_list_image(image_path: str, debug: bool = False) -> Dict[str, Any]:
+    """
+    Process an image and determine if it's a product photo or inventory list.
+
+    Returns:
+        {
+            "type": "product_image" | "inventory_list" | "single_product" | "unknown",
+            "data": None | product_dict | list_of_products
+        }
+    """
+    try:
+        from ocr import process_inventory_image
+        return process_inventory_image(image_path, debug=debug)
+    except Exception as e:
+        print(f"Error processing inventory image: {e}")
+        return {"type": "error", "data": None, "error": str(e)}
+
+
+def _compare_with_vendor_inventory(
+    extracted_products: List[Dict[str, Any]],
+    vendor_id: str,
+    intake_instance
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Compare extracted products with vendor's existing inventory.
+
+    Returns:
+        {
+            "to_add": [...],      # New products not in inventory
+            "to_update": [...],   # Products that exist and need updating
+            "to_delete": [...],   # Products marked for deletion
+            "unchanged": [...]    # Products that match exactly
+        }
+    """
+    result = {
+        "to_add": [],
+        "to_update": [],
+        "to_delete": [],
+        "unchanged": []
+    }
+
+    for product in extracted_products:
+        action = product.get("action", "add")
+        product_name = product.get("prod_name", "")
+
+        if not product_name:
+            continue
+
+        # Check if product already exists in vendor's inventory
+        similar = intake_instance.find_similar(
+            product_name,
+            product.get("price"),
+            vendor_id
+        ) if product_name else []
+
+        if action == "delete":
+            # Product marked for deletion - find matching product to delete
+            if similar:
+                best_match = similar[0]  # (short_id, product_name, similarity, product_id)
+                if best_match[2] >= 0.85:  # High similarity match
+                    product["matched_product_id"] = best_match[3]
+                    product["matched_short_id"] = best_match[0]
+                    product["matched_name"] = best_match[1]
+                    result["to_delete"].append(product)
+                else:
+                    # No good match for deletion
+                    product["error"] = "No matching product found to delete"
+                    result["unchanged"].append(product)
+            else:
+                product["error"] = "Product not found in inventory"
+                result["unchanged"].append(product)
+
+        elif action == "update":
+            # Product marked for update
+            if similar:
+                best_match = similar[0]
+                if best_match[2] >= 0.7:  # Moderate similarity for update
+                    product["matched_product_id"] = best_match[3]
+                    product["matched_short_id"] = best_match[0]
+                    product["matched_name"] = best_match[1]
+                    result["to_update"].append(product)
+                else:
+                    # Treat as new product if no good match
+                    result["to_add"].append(product)
+            else:
+                # No existing product - add as new
+                result["to_add"].append(product)
+
+        else:  # action == "add" or no action specified
+            if similar:
+                best_match = similar[0]
+                if best_match[2] >= 0.9:  # Very high similarity - might be duplicate
+                    # Check if significant fields differ (price, stock)
+                    # For now, treat as update if prices differ
+                    product["matched_product_id"] = best_match[3]
+                    product["matched_short_id"] = best_match[0]
+                    product["matched_name"] = best_match[1]
+                    product["potential_duplicate"] = True
+                    result["to_update"].append(product)
+                else:
+                    # Different enough to be a new product
+                    result["to_add"].append(product)
+            else:
+                # No similar products - definitely new
+                result["to_add"].append(product)
+
+    return result
+
+
+def _format_inventory_operations_message(operations: Dict[str, List]) -> str:
+    """Format a summary of inventory operations for the user."""
+    lines = ["*Inventory List Detected*\n"]
+
+    to_add = operations.get("to_add", [])
+    to_update = operations.get("to_update", [])
+    to_delete = operations.get("to_delete", [])
+
+    if to_add:
+        lines.append(f"*[ADD] {len(to_add)} product(s):*")
+        for i, p in enumerate(to_add, 1):  # Show ALL products
+            name = p.get("prod_name", "Unknown")
+            price = p.get("price", "?")
+            quantity = p.get("quantity", "1")
+            unit = p.get("unit", "pc")  # Default to piece
+            stock = p.get("stock", "?")
+            lines.append(f"  {i}. {name}")
+            # Show quantity in price if not 1 (e.g., ₹15/2packets)
+            if str(quantity) not in ("1", "1.0", ""):
+                lines.append(f"      Price: ₹{price}/{quantity}{unit} | Stock: {stock}")
+            else:
+                lines.append(f"      Price: ₹{price}/{unit} | Stock: {stock}")
+        lines.append("")
+
+    if to_update:
+        lines.append(f"*[UPDATE] {len(to_update)} product(s):*")
+        update_start_idx = len(to_add) + 1  # Continue numbering from to_add
+        for i, p in enumerate(to_update, update_start_idx):  # Show ALL products
+            name = p.get("prod_name", "Unknown")
+            matched = p.get("matched_name", "")
+            price = p.get("price", "?")
+            quantity = p.get("quantity", "1")
+            unit = p.get("unit", "pc")
+            stock = p.get("stock", "?")
+            lines.append(f"  {i}. {name} → {matched}")
+            # Show quantity in price if not 1 (e.g., ₹15/2packets)
+            if str(quantity) not in ("1", "1.0", ""):
+                lines.append(f"      Price: ₹{price}/{quantity}{unit} | Stock: {stock}")
+            else:
+                lines.append(f"      Price: ₹{price}/{unit} | Stock: {stock}")
+        lines.append("")
+
+    if to_delete:
+        lines.append(f"*[DELETE] {len(to_delete)} product(s):*")
+        for i, p in enumerate(to_delete, 1):  # Show ALL products
+            matched = p.get("matched_name", p.get("prod_name", "Unknown"))
+            short_id = p.get("matched_short_id", "?")
+            lines.append(f"  {i}. {matched} (ID: {short_id})")
+        lines.append("")
+
+    if not to_add and not to_update and not to_delete:
+        lines.append("No changes detected from this inventory list.")
+        return "\n".join(lines)
+
+    lines.append("*Reply with:*")
+    lines.append("• *yes* or *confirm* to apply all changes")
+    lines.append("• *no* or *cancel* to discard")
+    lines.append("• *add only* to only add new products")
+    lines.append("• *update only* to only update existing products")
+    lines.append("• *delete only* to only delete products")
+    lines.append("")
+    lines.append("*To edit before confirming:*")
+    lines.append("• `1 name is Maggi` - change name")
+    lines.append("• `1 price is 50` - change price")
+    lines.append("• `1 unit is kg` - change unit")
+    lines.append("• `1 stock is 100` - change stock")
+
+    return "\n".join(lines)
+
+
 # ==================== Image Save Utility ====================
 
 PRODUCT_IMAGES_DIR = Path(Config.BASE_DIR) / "data" / "databases" / "images"
@@ -1420,7 +1810,7 @@ def _get_vendor_username_by_phone(phone: str) -> Optional[str]:
         db_path = Path(Config.BASE_DIR) / "data" / "databases" / "sql" / "vendor.db"
 
     if not db_path.exists():
-        print(f"⚠️ Vendor DB not found: {db_path}")
+        print(f"[WARN] Vendor DB not found: {db_path}")
         return None
 
     try:
@@ -1434,14 +1824,14 @@ def _get_vendor_username_by_phone(phone: str) -> Optional[str]:
             if _normalize_phone(row["phone"]) == normalized_phone:
                 username = row["username"]
                 conn.close()
-                print(f"📦 Found vendor username '{username}' for phone {phone}")
+                print(f"[INFO] Found vendor username '{username}' for phone {phone}")
                 return username
 
         conn.close()
-        print(f"⚠️ No vendor found for phone {phone}")
+        print(f"[WARN] No vendor found for phone {phone}")
         return None
     except Exception as e:
-        print(f"❌ Error looking up vendor: {e}")
+        print(f"[ERROR] Error looking up vendor: {e}")
         return None
 
 
@@ -1579,6 +1969,14 @@ class SessionState:
     # Pending product image (when image sent without product details)
     pending_image_path: Optional[str] = None
 
+    # Inventory list operations (for bulk add/update/delete from OCR'd list)
+    inventory_list_mode: bool = False
+    inventory_operations: Optional[Dict[str, List[Dict[str, Any]]]] = None  # {to_add, to_update, to_delete}
+    awaiting_inventory_confirmation: bool = False
+
+    # Empty inventory confirmation
+    awaiting_empty_inventory_confirmation: bool = False
+
     def reset(self):
         self.mode = None
         self.session_start = _now()
@@ -1607,6 +2005,12 @@ class SessionState:
         self.product_message_map = {}
         # Pending image
         self.pending_image_path = None
+        # Inventory list operations
+        self.inventory_list_mode = False
+        self.inventory_operations = None
+        self.awaiting_inventory_confirmation = False
+        # Empty inventory confirmation
+        self.awaiting_empty_inventory_confirmation = False
 
     def has_bulk_items(self) -> bool:
         """Check if there are items in the bulk queue to process."""
@@ -1832,11 +2236,18 @@ class InventoryIntake:
 
             # If price provided, boost score for matching price
             if price is not None and prod_price is not None:
-                # Price similarity: 1.0 if exact match, decreasing as difference grows
-                price_diff_ratio = abs(price - prod_price) / max(price, prod_price, 1)
-                price_score = max(0, 1 - price_diff_ratio)
-                # Combined score: 70% name, 30% price
-                combined_score = (name_score * 0.7) + (price_score * 0.3)
+                try:
+                    # Convert prices to float if they're strings
+                    price_val = float(price) if isinstance(price, str) else price
+                    prod_price_val = float(prod_price) if isinstance(prod_price, str) else prod_price
+                    # Price similarity: 1.0 if exact match, decreasing as difference grows
+                    price_diff_ratio = abs(price_val - prod_price_val) / max(price_val, prod_price_val, 1)
+                    price_score = max(0, 1 - price_diff_ratio)
+                    # Combined score: 70% name, 30% price
+                    combined_score = (name_score * 0.7) + (price_score * 0.3)
+                except (ValueError, TypeError):
+                    # If price conversion fails, use name score only
+                    combined_score = name_score
             else:
                 combined_score = name_score
 
@@ -2365,7 +2776,7 @@ class VendorIntakeFlow:
                                 {
                                     "type": "text",
                                     "text": (
-                                        f"⏰ Session timed out. Changes to *{product_name}*{id_info} have been rolled back.\n\n"
+                                        f"Session timed out. Changes to *{product_name}*{id_info} have been rolled back.\n\n"
                                         "The product has been restored to its previous state.\n"
                                         "Please start again when you're ready.\n\n"
                                         "• Type 'inventory' to see your products\n"
@@ -2390,6 +2801,14 @@ class VendorIntakeFlow:
         if session.has_pending_bulk_items():
             return self._handle_parallel_bulk_reply(session, message, reply_context)
 
+        # Handle inventory list confirmation
+        if session.awaiting_inventory_confirmation and session.inventory_operations:
+            return self._handle_inventory_confirmation(session, message)
+
+        # Handle empty inventory confirmation
+        if session.awaiting_empty_inventory_confirmation:
+            return self._handle_empty_inventory_confirmation(session, message)
+
         # Handle pending confirmation for similar products
         if session.pending_confirmation:
             return self._handle_confirmation(session, message)
@@ -2406,6 +2825,10 @@ class VendorIntakeFlow:
         # Skip query/change/remove handlers when attachments are present
         # Attachments indicate user is adding/updating a product with an image
         if not attachments:
+            # Check for empty inventory intent (e.g., "empty inventory", "clear all", etc.)
+            if _is_empty_inventory_intent(message):
+                return self._initiate_empty_inventory(session, user_id)
+
             # Check for change commands like "change maggi price to 15"
             change_result = self._handle_change_command(user_id, message)
             if change_result:
@@ -2469,21 +2892,43 @@ class VendorIntakeFlow:
                         # Initialize OCR models if not already done
                         _initialize_ocr(debug=False)
 
-                        # Process the image/document with OCR
-                        ocr_data = _process_image_with_ocr(file_path, debug=False)
+                        # Use enhanced inventory list detection
+                        ocr_result = _process_inventory_list_image(file_path, debug=False)
+                        result_type = ocr_result.get("type", "unknown")
 
-                        if ocr_data and ocr_data.get("prod_name"):
-                            ocr_payload = _ocr_data_to_payload(ocr_data)
-                            # If OCR extracts a single product, the image might be a product photo
-                            # Store the image path for saving
-                            if image_attachments:
-                                ocr_payload["image_path"] = file_path
-                            print(f"OCR extracted: {ocr_payload.get('name')}")
-                        else:
-                            # OCR couldn't extract product info - maybe it's just a product photo
-                            # Ask user to provide text details
-                            if image_attachments:
-                                # Store in session for next message
+                        if result_type == "inventory_list":
+                            # Multiple products detected - inventory list flow
+                            products = ocr_result.get("data", [])
+                            print(f"Inventory list detected: {len(products)} products")
+
+                            # Compare with vendor's existing inventory
+                            operations = _compare_with_vendor_inventory(
+                                products, session.user_id, self.intake
+                            )
+
+                            # Store operations in session for confirmation
+                            session.inventory_list_mode = True
+                            session.inventory_operations = operations
+                            session.awaiting_inventory_confirmation = True
+
+                            # Return formatted summary for user confirmation
+                            summary = _format_inventory_operations_message(operations)
+                            return {
+                                "messages": [
+                                    {"type": "text", "text": summary}
+                                ]
+                            }
+
+                        elif result_type == "single_product":
+                            # Single product extracted via OCR
+                            ocr_data = ocr_result.get("data", {})
+                            if ocr_data and ocr_data.get("prod_name"):
+                                ocr_payload = _ocr_data_to_payload(ocr_data)
+                                if image_attachments:
+                                    ocr_payload["image_path"] = file_path
+                                print(f"OCR extracted single product: {ocr_payload.get('name')}")
+                            else:
+                                # Fall back to asking for details
                                 session.pending_image_path = file_path
                                 return {
                                     "messages": [
@@ -2500,22 +2945,72 @@ class VendorIntakeFlow:
                                         }
                                     ],
                                 }
-                            else:
+
+                        elif result_type == "product_image":
+                            # Image with minimal text - likely a product photo
+                            if image_attachments:
+                                session.pending_image_path = file_path
                                 return {
                                     "messages": [
                                         {
                                             "type": "text",
                                             "text": (
-                                                "I couldn't extract product information from this document. "
-                                                "Please try sending a clearer image or provide the details as text:\n"
-                                                "• Product name\n• Price\n• Quantity/Stock"
+                                                "I see you sent a product image.\n\n"
+                                                "Please provide the product details:\n"
+                                                "• Product name\n"
+                                                "• Price\n"
+                                                "• Stock quantity\n\n"
+                                                "Example: 'Red Cotton Shirt Rs 500 stock 50'"
                                             ),
                                         }
-                                    ]
+                                    ],
                                 }
+
+                        else:
+                            # Unknown or error - try old method as fallback
+                            ocr_data = _process_image_with_ocr(file_path, debug=False)
+
+                            if ocr_data and ocr_data.get("prod_name"):
+                                ocr_payload = _ocr_data_to_payload(ocr_data)
+                                if image_attachments:
+                                    ocr_payload["image_path"] = file_path
+                                print(f"OCR extracted: {ocr_payload.get('name')}")
+                            else:
+                                if image_attachments:
+                                    session.pending_image_path = file_path
+                                    return {
+                                        "messages": [
+                                            {
+                                                "type": "text",
+                                                "text": (
+                                                    "I see you sent an image. Is this a product photo?\n\n"
+                                                    "Please provide the product details:\n"
+                                                    "• Product name\n"
+                                                    "• Price\n"
+                                                    "• Stock quantity\n\n"
+                                                    "Example: 'Red Cotton Shirt Rs 500 stock 50'"
+                                                ),
+                                            }
+                                        ],
+                                    }
+                                else:
+                                    return {
+                                        "messages": [
+                                            {
+                                                "type": "text",
+                                                "text": (
+                                                    "I couldn't extract product information from this document. "
+                                                    "Please try sending a clearer image or provide the details as text:\n"
+                                                    "• Product name\n• Price\n• Quantity/Stock"
+                                                ),
+                                            }
+                                        ]
+                                    }
 
                     except Exception as e:
                         print(f"OCR error: {e}")
+                        import traceback
+                        traceback.print_exc()
                         return {
                             "messages": [
                                 {
@@ -2979,48 +3474,36 @@ class VendorIntakeFlow:
                         {
                             "type": "text",
                             "text": (
-                                "📦 Your inventory is empty.\n\n"
-                                "━━━━━━━━━━━━━━━━━━━━━━\n"
-                                "➕ *Add Products*\n"
+                                "Your inventory is empty.\n\n"
+                                "*Add Products*\n"
                                 "   add [name] [price] [qty] [unit] [stock]\n"
                                 "   Example: add Maggi 10 1 pack 50\n\n"
-                                "📋 *Bulk Add*\n"
+                                "*Bulk Add*\n"
                                 "   bulk add\n"
                                 "   Maggi 10 1 50\n"
                                 "   Chips 20 1 100\n\n"
-                                "❌ *Exit*\n"
-                                "   Type: exit or close\n"
-                                "━━━━━━━━━━━━━━━━━━━━━━"
+                                "*Exit*\n"
+                                "   Type: exit or close"
                             ),
                         }
                     ]
                 }
 
-            lines = ["📦 *Your Inventory*", "━━━━━━━━━━━━━━━━━━━━━━"]
+            lines = ["*Your Inventory*", ""]
 
             for i, p in enumerate(inventory, start=1):
                 lines.append(f"{i}. *{p['name']}* (ID: {p['short_id']})")
                 unit = p.get('quantityunit', 'unit') or 'unit'
-                lines.append(f"   ₹{p['price']} per {p['quantity']} {unit} | Stock: {p['stock']}")
+                lines.append(f"   Rs.{p['price']} per {p['quantity']} {unit} | Stock: {p['stock']}")
 
-            lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append("")
             lines.append(f"Total: {len(inventory)} product(s)")
             lines.append("")
-            lines.append("*What would you like to do next?*")
-            lines.append("")
-            lines.append("➕ *Add Products*")
-            lines.append("   Type: add [name] [price] [qty] [unit] [stock]")
-            lines.append("")
-            lines.append("🔄 *Quick Change*")
-            lines.append("   change [ID] [field] to [value]")
-            lines.append("   Example: change JXYK stock to 50")
-            lines.append("")
-            lines.append("🗑️ *Remove Product*")
-            lines.append("   remove [ID]")
-            lines.append("")
-            lines.append("❌ *Exit*")
-            lines.append("   Type: exit or close")
-            lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append("*Commands:*")
+            lines.append("- add [name] [price] [qty] [unit] [stock]")
+            lines.append("- change [ID] [field] to [value]")
+            lines.append("- remove [ID]")
+            lines.append("- exit")
 
             return {"messages": [{"type": "text", "text": "\n".join(lines)}]}
 
@@ -3083,25 +3566,12 @@ class VendorIntakeFlow:
                 {
                     "type": "text",
                     "text": (
-                        "👋 Welcome! What would you like to do?\n\n"
-                        "━━━━━━━━━━━━━━━━━━━━━━\n"
-                        "📦 *View Inventory*\n"
-                        "   Type: inventory\n\n"
-                        "➕ *Add Product(s)*\n"
-                        "   add [name] [price] [qty] [unit] [stock]\n"
-                        "   Example: add Maggi 10 1 pack 50\n\n"
-                        "📋 *Bulk Add/Update*\n"
-                        "   Send multiple products, one per line:\n"
-                        "   bulk add\n"
-                        "   Maggi 10 1 50\n"
-                        "   Chips 20 1 100\n"
-                        "   Biscuits 15 1 75\n\n"
-                        "🔄 *Quick Change*\n"
-                        "   change [ID] [field] to [value]\n"
-                        "   Example: change JXYK stock to 50\n\n"
-                        "❌ *Exit*\n"
-                        "   Type: exit or close\n"
-                        "━━━━━━━━━━━━━━━━━━━━━━"
+                        "Welcome! What would you like to do?\n\n"
+                        "*View Inventory* - Type: inventory\n"
+                        "*Add Product(s)* - add [name] [price] [qty] [unit] [stock]\n"
+                        "*Bulk Add/Update* - Send products one per line\n"
+                        "*Quick Change* - change [ID] [field] to [value]\n"
+                        "*Exit* - Type: exit or close"
                     ),
                 }
             ]
@@ -4228,9 +4698,9 @@ class VendorIntakeFlow:
                         lines.append(f"   {idx}. *{item[1]}*{price_str}")
                         lines.append(f"      Match: {item_score:.0%}")
                     lines.append("")
-                    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-                    lines.append("ℹ️ Similarity = 70% name + 30% price")
-                    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+                    lines.append("---")
+                    lines.append("Similarity = 70% name + 30% price")
+                    lines.append("---")
                     lines.append("")
                     if mode == "add":
                         lines.append("Options:")
@@ -4262,14 +4732,309 @@ class VendorIntakeFlow:
             lines.append(f"{idx}. *{name}*{price_str}")
             lines.append(f"   Match: {score:.0%} (based on name similarity{' + price' if price else ''})")
         lines.append("")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("ℹ️ *How similarity works:*")
-        lines.append("• Name matching: 70% weight")
-        lines.append("• Price matching: 30% weight (if provided)")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("---")
+        lines.append("*How similarity works:*")
+        lines.append("- Name matching: 70% weight")
+        lines.append("- Price matching: 30% weight (if provided)")
+        lines.append("---")
         lines.append("")
         lines.append("Reply with the number to use it, or say 'add new' to continue with your version.")
         return {"messages": [{"type": "text", "text": "\n".join(lines)}]}
+
+    def _handle_inventory_confirmation(self, session: SessionState, message: str) -> Dict[str, Any]:
+        """Handle user confirmation for inventory list operations."""
+        lower = message.lower().strip()
+        operations = session.inventory_operations
+
+        # Ignore empty messages (can happen from duplicate webhooks)
+        if not lower:
+            return {"messages": []}
+
+        # Check for cancel/decline using LLM-based intent detection
+        if _is_negative(message):
+            # Clear inventory state
+            session.inventory_list_mode = False
+            session.inventory_operations = None
+            session.awaiting_inventory_confirmation = False
+            return {
+                "messages": [
+                    {"type": "text", "text": "Inventory list changes cancelled. No changes were made."}
+                ]
+            }
+
+        # Determine which operations to apply
+        apply_add = False
+        apply_update = False
+        apply_delete = False
+
+        # Check for specific operation commands first (before general affirmative check)
+        if lower in {"add only", "only add"}:
+            apply_add = True
+        elif lower in {"update only", "only update"}:
+            apply_update = True
+        elif lower in {"delete only", "only delete"}:
+            apply_delete = True
+        # Use LLM-based affirmative detection for general confirmation
+        elif _is_affirmative(message):
+            apply_add = apply_update = apply_delete = True
+        else:
+            # Try to parse as an edit command using LLM
+            edits = _parse_inventory_edits_with_llm(message, operations)
+
+            if edits:
+                # Apply edits to operations
+                session.inventory_operations = _apply_edits_to_operations(operations, edits)
+
+                # Format edit confirmation with user-friendly field names
+                field_display = {
+                    "prod_name": "name",
+                    "price": "price",
+                    "unit": "unit",
+                    "stock": "stock"
+                }
+                edit_msgs = []
+                for edit in edits:
+                    field_name = field_display.get(edit['field'], edit['field'])
+                    edit_msgs.append(f"• Product {edit['index']}: {field_name} → {edit['value']}")
+
+                # Format compact updated list (without repeating instructions)
+                updated_ops = session.inventory_operations
+                product_lines = []
+                to_add = updated_ops.get("to_add", [])
+                to_update = updated_ops.get("to_update", [])
+
+                if to_add:
+                    for i, p in enumerate(to_add, 1):
+                        name = p.get("prod_name", "Unknown")
+                        price = p.get("price", "?")
+                        quantity = p.get("quantity", "1")
+                        unit = p.get("unit", "pc")
+                        stock = p.get("stock", "?")
+                        # Show quantity in price if not 1 (e.g., ₹15/2packets)
+                        if str(quantity) not in ("1", "1.0", ""):
+                            product_lines.append(f"  {i}. {name} - ₹{price}/{quantity}{unit}, Stock: {stock}")
+                        else:
+                            product_lines.append(f"  {i}. {name} - ₹{price}/{unit}, Stock: {stock}")
+
+                if to_update:
+                    start_idx = len(to_add) + 1
+                    for i, p in enumerate(to_update, start_idx):
+                        name = p.get("prod_name", "Unknown")
+                        price = p.get("price", "?")
+                        quantity = p.get("quantity", "1")
+                        unit = p.get("unit", "pc")
+                        stock = p.get("stock", "?")
+                        # Show quantity in price if not 1 (e.g., ₹15/2packets)
+                        if str(quantity) not in ("1", "1.0", ""):
+                            product_lines.append(f"  {i}. {name} - ₹{price}/{quantity}{unit}, Stock: {stock}")
+                        else:
+                            product_lines.append(f"  {i}. {name} - ₹{price}/{unit}, Stock: {stock}")
+
+                response_text = (
+                    f"*Edits Applied:*\n" + "\n".join(edit_msgs) + "\n\n"
+                    f"*Updated List:*\n" + "\n".join(product_lines) + "\n\n"
+                    f"Reply *yes* to confirm or continue editing."
+                )
+
+                return {
+                    "messages": [
+                        {
+                            "type": "text",
+                            "text": response_text
+                        }
+                    ]
+                }
+
+            # Unrecognized response - short reminder (full instructions already shown in initial message)
+            return {
+                "messages": [
+                    {
+                        "type": "text",
+                        "text": "I didn't understand that. Reply *yes* to confirm, *no* to cancel, or edit a product (e.g., `1 price is 50`)."
+                    }
+                ]
+            }
+
+        # Execute the selected operations
+        results = {"added": 0, "updated": 0, "deleted": 0, "errors": []}
+
+        # Process ADD operations
+        if apply_add and operations.get("to_add"):
+            for product in operations["to_add"]:
+                try:
+                    payload = _ocr_data_to_payload(product)
+                    # Add product using intake - pass user_id and payload dict
+                    product_id = self.intake.add_product(session.user_id, payload)
+                    results["added"] += 1
+                    print(f"Added product: {payload.get('name')} -> {product_id}")
+                except Exception as e:
+                    results["errors"].append(f"Add {product.get('prod_name', '?')}: {str(e)}")
+                    print(f"Error adding product: {e}")
+
+        # Process UPDATE operations
+        if apply_update and operations.get("to_update"):
+            for product in operations["to_update"]:
+                try:
+                    product_id = product.get("matched_product_id")
+                    if not product_id:
+                        continue
+
+                    # Build update fields
+                    updates = {}
+                    if product.get("price"):
+                        try:
+                            updates["price"] = float(str(product["price"]).replace(",", "").replace("₹", "").replace("Rs", "").strip())
+                        except ValueError:
+                            pass
+                    if product.get("stock"):
+                        try:
+                            updates["stock"] = int(str(product["stock"]).replace(",", "").strip())
+                        except ValueError:
+                            pass
+                    if product.get("quantity"):
+                        try:
+                            updates["quantity"] = int(str(product["quantity"]).replace(",", "").strip())
+                        except ValueError:
+                            pass
+
+                    if updates:
+                        # Pass updates as payload dict, not as **kwargs
+                        result = self.intake.update_product(product_id, updates)
+                        success = result is not None
+                        if success:
+                            results["updated"] += 1
+                            print(f"Updated product: {product.get('matched_name')} -> {updates}")
+                        else:
+                            results["errors"].append(f"Update {product.get('matched_name', '?')}: Failed")
+                except Exception as e:
+                    results["errors"].append(f"Update {product.get('prod_name', '?')}: {str(e)}")
+                    print(f"Error updating product: {e}")
+
+        # Process DELETE operations
+        if apply_delete and operations.get("to_delete"):
+            for product in operations["to_delete"]:
+                try:
+                    product_id = product.get("matched_product_id")
+                    short_id = product.get("matched_short_id")
+                    if not product_id and not short_id:
+                        continue
+
+                    success = self.intake.remove_product(product_id=product_id, short_id=short_id)
+                    if success:
+                        results["deleted"] += 1
+                        print(f"Deleted product: {product.get('matched_name')}")
+                    else:
+                        results["errors"].append(f"Delete {product.get('matched_name', '?')}: Not found")
+                except Exception as e:
+                    results["errors"].append(f"Delete {product.get('prod_name', '?')}: {str(e)}")
+                    print(f"Error deleting product: {e}")
+
+        # Clear inventory state
+        session.inventory_list_mode = False
+        session.inventory_operations = None
+        session.awaiting_inventory_confirmation = False
+
+        # Format result message
+        result_lines = ["*Inventory Update Complete*\n"]
+        if results["added"] > 0:
+            result_lines.append(f"[+] Added: {results['added']} product(s)")
+        if results["updated"] > 0:
+            result_lines.append(f"[~] Updated: {results['updated']} product(s)")
+        if results["deleted"] > 0:
+            result_lines.append(f"[-] Deleted: {results['deleted']} product(s)")
+
+        if results["errors"]:
+            result_lines.append(f"\n[!] {len(results['errors'])} error(s):")
+            for err in results["errors"][:3]:  # Show first 3 errors
+                result_lines.append(f"  • {err}")
+            if len(results["errors"]) > 3:
+                result_lines.append(f"  ...and {len(results['errors']) - 3} more")
+
+        if results["added"] == 0 and results["updated"] == 0 and results["deleted"] == 0:
+            result_lines.append("No changes were applied.")
+
+        return {"messages": [{"type": "text", "text": "\n".join(result_lines)}]}
+
+    def _initiate_empty_inventory(self, session: SessionState, user_id: str) -> Dict[str, Any]:
+        """Initiate empty inventory confirmation flow."""
+        # Count products for this vendor
+        conn = self.sql_client._get_connection()
+        cur = conn.cursor()
+        normalized_vendor = user_id.replace("+", "").replace("-", "").replace(" ", "")
+        cur.execute(
+            "SELECT COUNT(*) as count FROM product_table WHERE REPLACE(REPLACE(REPLACE(store, '+', ''), '-', ''), ' ', '') = ?",
+            (normalized_vendor,)
+        )
+        row = cur.fetchone()
+        product_count = row["count"] if row else 0
+
+        if product_count == 0:
+            return {
+                "messages": [{"type": "text", "text": "Your inventory is already empty. Nothing to delete."}]
+            }
+
+        session.awaiting_empty_inventory_confirmation = True
+        session.locked_until = _now() + self.lock_seconds
+
+        return {
+            "messages": [{
+                "type": "text",
+                "text": (
+                    f"*WARNING: You are about to delete ALL products!*\n\n"
+                    f"This will permanently delete *{product_count} product(s)* from your inventory.\n\n"
+                    f"This action *cannot be undone*.\n\n"
+                    f"Reply 'yes' to confirm, or 'no' to cancel."
+                )
+            }]
+        }
+
+    def _handle_empty_inventory_confirmation(self, session: SessionState, message: str) -> Dict[str, Any]:
+        """Handle response to empty inventory confirmation."""
+        if _is_affirmative(message):
+            # Execute deletion
+            conn = self.sql_client._get_connection()
+            cur = conn.cursor()
+            normalized_vendor = session.user_id.replace("+", "").replace("-", "").replace(" ", "")
+
+            # Count before deletion
+            cur.execute(
+                "SELECT COUNT(*) as count FROM product_table WHERE REPLACE(REPLACE(REPLACE(store, '+', ''), '-', ''), ' ', '') = ?",
+                (normalized_vendor,)
+            )
+            row = cur.fetchone()
+            deleted_count = row["count"] if row else 0
+
+            # Delete all products
+            cur.execute(
+                "DELETE FROM product_table WHERE REPLACE(REPLACE(REPLACE(store, '+', ''), '-', ''), ' ', '') = ?",
+                (normalized_vendor,)
+            )
+            conn.commit()
+
+            session.reset()
+            return {
+                "messages": [{
+                    "type": "text",
+                    "text": f"Inventory emptied. *{deleted_count} product(s)* have been deleted.\n\nType 'add' to start adding new products."
+                }]
+            }
+
+        if _is_negative(message):
+            session.awaiting_empty_inventory_confirmation = False
+            return {
+                "messages": [{
+                    "type": "text",
+                    "text": "Cancelled. Your inventory remains unchanged."
+                }]
+            }
+
+        # Unclear response - re-prompt
+        return {
+            "messages": [{
+                "type": "text",
+                "text": "I didn't understand. Please reply 'yes' to delete all products, or 'no' to cancel."
+            }]
+        }
 
     def _handle_confirmation(self, session: SessionState, message: str) -> Dict[str, Any]:
         pending = session.pending_confirmation or {}
@@ -5233,7 +5998,7 @@ class VendorIntakeFlow:
                 lines.append(f"   • {p['name']}: {p['error']}")
 
         if not added and not updated and not failed:
-            lines.append("ℹ️ No products were confirmed for saving.")
+            lines.append("No products were confirmed for saving.")
 
         lines.append("\n\nType 'inventory' to see all your products.")
 

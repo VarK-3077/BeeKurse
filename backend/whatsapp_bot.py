@@ -58,7 +58,7 @@ def is_registered_vendor(phone: str) -> bool:
         normalized = _normalize_phone(phone)
         return normalized in {_normalize_phone(v) for v in registered}
     except Exception as e:
-        print(f"❌ Error checking vendor registry: {e}")
+        print(f"[ERROR] Error checking vendor registry: {e}")
         return False
 
 
@@ -72,7 +72,7 @@ def is_registered_user(phone: str) -> bool:
         normalized = _normalize_phone(phone)
         return normalized in {_normalize_phone(k) for k in data.keys()}
     except Exception as e:
-        print(f"❌ Error checking user registry: {e}")
+        print(f"[ERROR] Error checking user registry: {e}")
         return False
 
 GRAPH_API_BASE = "https://graph.facebook.com/v20.0"
@@ -95,7 +95,7 @@ def send_whatsapp_text_message(
         Dict with response data, including 'sent_message_id' on success
     """
     if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
-        print("❌ Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID in environment.")
+        print("[ERROR] Missing WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID in environment.")
         return {}
 
     url = f"{GRAPH_API_BASE}/{PHONE_NUMBER_ID}/messages"
@@ -120,13 +120,13 @@ def send_whatsapp_text_message(
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
     except Exception as e:
-        print("❌ Error sending message to WhatsApp:", e)
+        print("[ERROR] Error sending message to WhatsApp:", e)
         return {}
 
     if not resp.ok:
-        print("❌ Error sending message to WhatsApp:", resp.status_code, resp.text)
+        print("[ERROR] Error sending message to WhatsApp:", resp.status_code, resp.text)
     else:
-        print("✅ Message sent to WhatsApp:", resp.text)
+        print("[OK] Message sent to WhatsApp:", resp.text)
 
     result = resp.json() if resp.content else {}
 
@@ -145,7 +145,7 @@ def send_whatsapp_image_message(to_number: str, image_url: str, caption: str = "
     print("Does this happend??")
 
     if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
-        print("❌ Missing WHATSAPP_TOKEN or PHONE_NUMBER_ID")
+        print("[ERROR] Missing WHATSAPP_TOKEN or PHONE_NUMBER_ID")
         return {}
 
     url = f"{GRAPH_API_BASE}/{PHONE_NUMBER_ID}/messages"
@@ -167,13 +167,13 @@ def send_whatsapp_image_message(to_number: str, image_url: str, caption: str = "
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
     except Exception as e:
-        print("❌ Error sending image:", e)
+        print("[ERROR] Error sending image:", e)
         return {}
 
     if not resp.ok:
-        print("❌ Error sending image:", resp.status_code, resp.text)
+        print("[ERROR] Error sending image:", resp.status_code, resp.text)
     else:
-        print("📸 Image sent to WhatsApp:", resp.text)
+        print("[OK] Image sent to WhatsApp:", resp.text)
 
     return resp.json() if resp.content else {}
 
@@ -221,11 +221,11 @@ def download_whatsapp_media(media_id: str) -> str:
         with open(filepath, "wb") as f:
             f.write(media_resp.content)
 
-        print(f"📥 Downloaded media to: {filepath}")
+        print(f"[DOWNLOAD] Downloaded media to: {filepath}")
         return str(filepath)
 
     except Exception as e:
-        print(f"❌ Error downloading media {media_id}: {e}")
+        print(f"[ERROR] Error downloading media {media_id}: {e}")
         raise
 
 
@@ -248,10 +248,10 @@ async def verify_webhook(request: Request):
     token = params.get("hub.verify_token")
 
     if mode == "subscribe" and token == VERIFY_TOKEN:
-        print("✅ Webhook verified successfully.")
+        print("[OK] Webhook verified successfully.")
         return PlainTextResponse(challenge)
 
-    print("❌ Webhook verification failed.")
+    print("[ERROR] Webhook verification failed.")
     return PlainTextResponse("Verification failed", status_code=403)
 
 
@@ -280,12 +280,12 @@ def load_shortid_mapping():
         rows = cur.fetchall()
         _shortid_cache = {short: pid for (short, pid) in rows if short}
     except Exception as e:
-        print("❌ Error loading short_id mapping:", e)
+        print("[ERROR] Error loading short_id mapping:", e)
         _shortid_cache = {}
     finally:
         conn.close()
 
-    print(f"🔑 Loaded {len(_shortid_cache)} short-id mappings")
+    print(f"[INFO] Loaded {len(_shortid_cache)} short-id mappings")
     return _shortid_cache
 
 
@@ -347,7 +347,7 @@ async def receive_webhook(request: Request):
         if "context" in message:
             # User quoted/replied to a previous message
             context_message_id = message["context"].get("id")
-            print(f"📎 Reply to message: {context_message_id}")
+            print(f"[INFO] Reply to message: {context_message_id}")
 
         # ===== Determine User Type: Vendor, User, or New User =====
         is_vendor = is_registered_vendor(from_number)
@@ -355,7 +355,7 @@ async def receive_webhook(request: Request):
 
         # ===== VENDOR FLOW (handles both text and images) =====
         if is_vendor:
-            print(f"🏪 VENDOR detected: {from_number}")
+            print(f"[VENDOR] VENDOR detected: {from_number}")
 
             raw_user_text = ""
             attachments = []
@@ -363,7 +363,7 @@ async def receive_webhook(request: Request):
             # Handle different message types for vendors
             if msg_type == "text":
                 raw_user_text = message["text"]["body"]
-                print(f"📩 Vendor text message: {raw_user_text}")
+                print(f"[MSG] Vendor text message: {raw_user_text}")
 
             elif msg_type == "image":
                 # Download the image from WhatsApp
@@ -381,9 +381,9 @@ async def receive_webhook(request: Request):
                             "mime_type": image_info.get("mime_type", "image/jpeg")
                         })
                         raw_user_text = caption  # Use caption as text if provided
-                        print(f"📸 Vendor image received, saved to: {local_path}")
+                        print(f"[IMG] Vendor image received, saved to: {local_path}")
                     except Exception as e:
-                        print(f"❌ Failed to download vendor image: {e}")
+                        print(f"[ERROR] Failed to download vendor image: {e}")
                         send_whatsapp_text_message(
                             from_number,
                             "Failed to process your image. Please try again."
@@ -407,9 +407,9 @@ async def receive_webhook(request: Request):
                             "filename": doc_info.get("filename", "document")
                         })
                         raw_user_text = caption
-                        print(f"📄 Vendor document received, saved to: {local_path}")
+                        print(f"[DOC] Vendor document received, saved to: {local_path}")
                     except Exception as e:
-                        print(f"❌ Failed to download vendor document: {e}")
+                        print(f"[ERROR] Failed to download vendor document: {e}")
                         send_whatsapp_text_message(
                             from_number,
                             "Failed to process your document. Please try again."
@@ -424,7 +424,7 @@ async def receive_webhook(request: Request):
                 return JSONResponse({"status": "unsupported_vendor_type"}, status_code=200)
 
             # Route to vendor backend with attachments and context
-            print(f"🏪 Routing to VENDOR backend for {from_number}")
+            print(f"[VENDOR] Routing to VENDOR backend for {from_number}")
             try:
                 backend_resp = requests.post(
                     VENDOR_BACKEND_URL,
@@ -440,7 +440,7 @@ async def receive_webhook(request: Request):
                 backend_resp.raise_for_status()
                 backend_data = backend_resp.json()
             except Exception as e:
-                print("❌ Error calling vendor backend:", e)
+                print("[ERROR] Error calling vendor backend:", e)
                 send_whatsapp_text_message(
                     from_number,
                     "Something went wrong processing your vendor request. Try again later."
@@ -464,7 +464,7 @@ async def receive_webhook(request: Request):
                             product_index = msg.get("product_index")
                             if sent_wamid and product_index is not None:
                                 message_mappings[sent_wamid] = product_index
-                                print(f"📍 Mapped message {sent_wamid[:20]}... -> product {product_index}")
+                                print(f"[INFO] Mapped message {sent_wamid[:20]}... -> product {product_index}")
 
                 # Register message ID mappings with vendor backend
                 if message_mappings:
@@ -474,9 +474,9 @@ async def receive_webhook(request: Request):
                             json={"user_id": from_number, "mappings": message_mappings},
                             timeout=10
                         )
-                        print(f"📍 Registered {len(message_mappings)} message mappings")
+                        print(f"[INFO] Registered {len(message_mappings)} message mappings")
                     except Exception as e:
-                        print(f"⚠️ Failed to register message mappings: {e}")
+                        print(f"[WARN] Failed to register message mappings: {e}")
 
             elif "reply" in backend_data:
                 send_whatsapp_text_message(from_number, backend_data["reply"])
@@ -494,12 +494,12 @@ async def receive_webhook(request: Request):
 
         # Get raw user text (before short ID resolution)
         raw_user_text = message["text"]["body"]
-        print(f"📩 Incoming message from {from_number}: {raw_user_text}")
+        print(f"[MSG] Incoming message from {from_number}: {raw_user_text}")
 
         # ===== USER FLOW (existing user or new user - new users default to user onboarding) =====
         # Note: If not a vendor and not an existing user, they're a new user (default)
         if not is_user:
-            print(f"🆕 New user detected: {from_number} - Starting user onboarding")
+            print(f"[NEW] New user detected: {from_number} - Starting user onboarding")
 
         # ===== User Management Check =====
         user_manager = get_user_manager()
@@ -507,7 +507,7 @@ async def receive_webhook(request: Request):
 
         if onboarding_response is not None:
             # User is in onboarding flow - send onboarding message
-            print(f"🆕 Onboarding response to {from_number}")
+            print(f"[NEW] Onboarding response to {from_number}")
             send_whatsapp_text_message(from_number, onboarding_response)
             return JSONResponse({"status": "onboarding"}, status_code=200)
         # ===== End User Management Check =====
@@ -518,7 +518,7 @@ async def receive_webhook(request: Request):
 
         if cart_response is not None:
             # Cart/wishlist command handled
-            print(f"🛒 Cart command handled for {from_number}")
+            print(f"[CART] Cart command handled for {from_number}")
             send_whatsapp_text_message(from_number, cart_response)
             return JSONResponse({"status": "cart_handled"}, status_code=200)
         # ===== End Cart/Wishlist Command Check =====
@@ -527,7 +527,7 @@ async def receive_webhook(request: Request):
         user_text = resolve_short_ids_in_text(raw_user_text)
 
         # ===== Call USER backend =====
-        print(f"👤 Routing to USER backend for {from_number}")
+        print(f"[USER] Routing to USER backend for {from_number}")
         try:
             backend_resp = requests.post(
                 BACKEND_URL,
@@ -542,7 +542,7 @@ async def receive_webhook(request: Request):
             backend_resp.raise_for_status()
             backend_data = backend_resp.json()
         except Exception as e:
-            print("❌ Error calling backend:", e)
+            print("[ERROR] Error calling backend:", e)
             send_whatsapp_text_message(
                 from_number,
                 "Some error happened in my brain (backend). Try again later."
@@ -622,7 +622,7 @@ async def receive_webhook(request: Request):
         # Format 3: Chat response - {"reply": str}
         elif "reply" in backend_data:
             reply_text = backend_data["reply"]
-            print(f"💬 Replying to {from_number}: {reply_text}")
+            print(f"[REPLY] Replying to {from_number}: {reply_text}")
             send_whatsapp_text_message(from_number, reply_text)
 
         else:
@@ -637,21 +637,21 @@ async def receive_webhook(request: Request):
         return JSONResponse({"status": "ok"}, status_code=200)
 
     except Exception as e:
-        print("❌ Error handling webhook:", e)
+        print("[ERROR] Error handling webhook:", e)
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
 
 if __name__ == "__main__":
     import uvicorn
     print("\n" + "="*80)
-    print("🚀 Starting WhatsApp Webhook")
+    print("Starting WhatsApp Webhook")
     print("="*80)
-    print(f"📍 Webhook endpoint: http://0.0.0.0:8000/webhook")
-    print(f"🔑 Verify token: {VERIFY_TOKEN}")
-    print(f"👤 User Backend URL: {BACKEND_URL}")
-    print(f"🏪 Vendor Backend URL: {VENDOR_BACKEND_URL}")
-    print(f"📋 User Registry: {USER_REGISTRY_PATH}")
-    print(f"📋 Vendor Registry: {VENDOR_REGISTRY_PATH}")
+    print(f"Webhook endpoint: http://0.0.0.0:8000/webhook")
+    print(f"Verify token: {VERIFY_TOKEN}")
+    print(f"User Backend URL: {BACKEND_URL}")
+    print(f"Vendor Backend URL: {VENDOR_BACKEND_URL}")
+    print(f"User Registry: {USER_REGISTRY_PATH}")
+    print(f"Vendor Registry: {VENDOR_REGISTRY_PATH}")
     print("="*80 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

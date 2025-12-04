@@ -355,14 +355,14 @@ class CartManager:
             cart = self.get_cart(user_id)
             if not cart:
                 return "Your cart is empty! Search for products and add them to your cart."
-            return f"🛒 You have {len(cart)} item(s) in your cart.\n\nView & manage: {self.get_cart_url(user_id)}"
+            return f"You have {len(cart)} item(s) in your cart.\n\nView & manage: {self.get_cart_url(user_id)}"
 
         # ===== VIEW WISHLIST =====
         if text in ["wishlist", "my wishlist", "show wishlist", "view wishlist", "saved", "saved items", "favorites"]:
             wishlist = self.get_wishlist(user_id)
             if not wishlist:
                 return "Your wishlist is empty! Search for products and save them."
-            return f"❤️ You have {len(wishlist)} item(s) in your wishlist.\n\nView & manage: {self.get_wishlist_url(user_id)}"
+            return f"You have {len(wishlist)} item(s) in your wishlist.\n\nView & manage: {self.get_wishlist_url(user_id)}"
 
         # ===== ADD TO CART (with short ID) =====
         # Patterns: "cart A1B2", "add A1B2 to cart", "add to cart A1B2"
@@ -381,7 +381,7 @@ class CartManager:
                     products = fetch_products_by_ids([product_id])
                     name = products.get(product_id, {}).get("prod_name", short_id)
                     if success:
-                        return f"Added *{name}* to your cart!\n\n🛒 View cart: {self.get_cart_url(user_id)}"
+                        return f"Added *{name}* to your cart!\n\nView cart: {self.get_cart_url(user_id)}"
                 return f"Could not find product with ID: {short_id}"
 
         # ===== ADD TO CART (last viewed) =====
@@ -394,7 +394,7 @@ class CartManager:
                 products = fetch_products_by_ids([product_id])
                 name = products.get(product_id, {}).get("prod_name", short_id or product_id)
                 if success:
-                    return f"Added *{name}* to your cart!\n\n🛒 View cart: {self.get_cart_url(user_id)}"
+                    return f"Added *{name}* to your cart!\n\nView cart: {self.get_cart_url(user_id)}"
             return "No product to add. Please view a product first or specify the ID like: cart A1B2"
 
         # ===== ADD TO WISHLIST (with short ID) =====
@@ -416,8 +416,8 @@ class CartManager:
                     name = products.get(product_id, {}).get("prod_name", short_id)
                     if success:
                         if status == "already_exists":
-                            return f"*{name}* is already in your wishlist!\n\n❤️ View wishlist: {self.get_wishlist_url(user_id)}"
-                        return f"Saved *{name}* to your wishlist!\n\n❤️ View wishlist: {self.get_wishlist_url(user_id)}"
+                            return f"*{name}* is already in your wishlist!\n\nView wishlist: {self.get_wishlist_url(user_id)}"
+                        return f"Saved *{name}* to your wishlist!\n\nView wishlist: {self.get_wishlist_url(user_id)}"
                 return f"Could not find product with ID: {short_id}"
 
         # ===== ADD TO WISHLIST (last viewed) =====
@@ -431,8 +431,8 @@ class CartManager:
                 name = products.get(product_id, {}).get("prod_name", short_id or product_id)
                 if success:
                     if status == "already_exists":
-                        return f"*{name}* is already in your wishlist!\n\n❤️ View wishlist: {self.get_wishlist_url(user_id)}"
-                    return f"Saved *{name}* to your wishlist!\n\n❤️ View wishlist: {self.get_wishlist_url(user_id)}"
+                        return f"*{name}* is already in your wishlist!\n\nView wishlist: {self.get_wishlist_url(user_id)}"
+                    return f"Saved *{name}* to your wishlist!\n\nView wishlist: {self.get_wishlist_url(user_id)}"
             return "No product to save. Please view a product first or specify the ID like: save A1B2"
 
         # ===== REMOVE FROM CART =====

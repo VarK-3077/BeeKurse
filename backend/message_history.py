@@ -40,7 +40,7 @@ class MessageHistoryManager:
                 with open(history_path, 'r') as f:
                     return json.load(f)
             except Exception as e:
-                print(f"⚠️ Error loading message history for {user_id}: {e}")
+                print(f"[WARN] Error loading message history for {user_id}: {e}")
         return {"mappings": {}, "updated_at": None}
 
     def save_history(self, user_id: str, history: Dict[str, Any]):

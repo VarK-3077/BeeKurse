@@ -194,7 +194,7 @@ def add_to_vendor_registry(phone: str):
             registry["registered"].append(normalized)
             with open(VENDOR_REGISTRY_PATH, 'w') as f:
                 json.dump(registry, f, indent=2)
-            print(f"📱 Added {normalized} to vendor registry")
+            print(f"[INFO] Added {normalized} to vendor registry")
         return True
     except Exception as e:
         print(f"Error updating vendor registry: {e}")
@@ -667,10 +667,10 @@ async def upload_files(
         # Normal mode: use configured database with embeddings
         if config.USE_VENDOR_TEST_DB:
             db_path = config.VENDOR_TEST_DB_PATH
-            print(f"🧪 Saving product to VENDOR TEST database: {db_path}")
+            print(f"[TEST] Saving product to VENDOR TEST database: {db_path}")
         else:
             db_path = config.SQL_DB_PATH
-            print(f"📦 Saving product to MAIN database: {db_path}")
+            print(f"[DB] Saving product to MAIN database: {db_path}")
 
         # Save to SQL database with embeddings
         saved_row = add_subcategory_embedding_and_save(complete_product, db_path=db_path)
@@ -820,14 +820,14 @@ async def get_my_products(
 if __name__ == "__main__":
     import uvicorn
     print("\n" + "="*80)
-    print("🏪 Starting Vendor API Server")
+    print("Starting Vendor API Server")
     print("="*80)
-    print(f"📍 API endpoint: http://0.0.0.0:8000")
-    print(f"📦 Test DB enabled: {config.USE_VENDOR_TEST_DB}")
+    print(f"API endpoint: http://0.0.0.0:8000")
+    print(f"Test DB enabled: {config.USE_VENDOR_TEST_DB}")
     if config.USE_VENDOR_TEST_DB:
-        print(f"🧪 Using database: {config.VENDOR_TEST_DB_PATH}")
+        print(f"Using database: {config.VENDOR_TEST_DB_PATH}")
     else:
-        print(f"📊 Using database: {config.SQL_DB_PATH}")
+        print(f"Using database: {config.SQL_DB_PATH}")
     print("="*80 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 # Initialize components
-print("🚀 Initializing Strontium Backend...")
+print("Initializing Strontium Backend...")
 
 # Strontium Agent with NVIDIA API
 strontium = StrontiumAgent(
@@ -69,7 +69,7 @@ sql_client = SQLClient(db_path=config.SQL_DB_PATH)
 # Pass None to let VendorIntakeFlow decide based on USE_VENDOR_TEST_DB config
 vendor_flow = VendorIntakeFlow(sql_client=None)
 
-print("✅ Strontium Backend initialized successfully!")
+print("[OK] Strontium Backend initialized successfully!")
 
 
 class MessagePayload(BaseModel):
@@ -107,7 +107,7 @@ def set_user_images(user_id: str, products_data: List[Dict[str, Any]]):
     for product in products_data:
         user_current_images[user_id].append(product)
     
-    print(f"📸 Set {len(products_data)} images for user {user_id} (replaced old images)")
+    print(f"[INFO] Set {len(products_data)} images for user {user_id} (replaced old images)")
 
 
 def get_user_images(user_id: str) -> List[Dict[str, Any]]:
@@ -202,7 +202,7 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
         # Pick top 4 products for images
         top_products = [products[pid] for pid in all_product_ids[:4] if pid in products]
 
-        # ✨ Build image captions with product details
+        # Build image captions with product details
         images = []
         for p in top_products:
             name = p["prod_name"]
@@ -220,7 +220,7 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
         # Get product IDs for the images (for message tracking)
         top_product_ids = all_product_ids[:4]
 
-        # ✨ Build gallery link message (separate)
+        # Build gallery link message (separate)
         gallery_message = None
         if len(all_product_ids) > 4:
             # Use unified NGROK_URL with /gallery path, fallback to localhost
@@ -230,7 +230,7 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
             else:
                 gallery_base_url = "http://localhost:5400"
             gallery_message = (
-                f"🖼️ *View all {len(all_product_ids)} products with images:*\n\n"
+                f"*View all {len(all_product_ids)} products with images:*\n\n"
                 f"{gallery_base_url}?user={user_id}"
             )
 
@@ -242,9 +242,9 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
         }
 
     except Exception as e:
-        print(f"❌ Error in search: {e}")
+        print(f"[ERROR] Error in search: {e}")
         return {
-            "text": "❌ Something went wrong while searching.",
+            "text": "Something went wrong while searching.",
             "images": []
         }
 
@@ -271,7 +271,7 @@ def format_detail_response(
         if not product_ids:
             return {
                 "messages": [
-                    {"type": "text", "text": "❌ No product ID found."}
+                    {"type": "text", "text": "No product ID found."}
                 ]
             }
 
@@ -287,13 +287,13 @@ def format_detail_response(
                 resolved_ids.append(pid)
         product_ids = resolved_ids
 
-        # ⭐ Fetch using your improved extractor
+        # Fetch using improved extractor
         products = fetch_products_by_ids(product_ids)
 
         if not products:
             return {
                 "messages": [
-                    {"type": "text", "text": f"❌ No product found for ID(s) {', '.join(product_ids)}"}
+                    {"type": "text", "text": f"No product found for ID(s) {', '.join(product_ids)}"}
                 ]
             }
 
@@ -317,7 +317,7 @@ def format_detail_response(
             "text": answer
         })
 
-        # ⭐ Return multi-message response with product_ids for cart tracking
+        # Return multi-message response with product_ids for cart tracking
         return {
             "messages": messages,
             "product_ids": product_ids,
@@ -326,12 +326,12 @@ def format_detail_response(
         }
 
     except Exception as e:
-        print("❌ DETAIL ERROR:", e)
+        print("[ERROR] DETAIL ERROR:", e)
         import traceback
         traceback.print_exc()
         return {
             "messages": [
-                {"type": "text", "text": "❌ Could not fetch details."}
+                {"type": "text", "text": "Could not fetch details."}
             ]
         }
 
@@ -357,7 +357,7 @@ def format_chat_response(parsed: Dict[str, Any], chat_handler: ChatHandler, user
         return response
 
     except Exception as e:
-        print(f"❌ Error in chat: {e}")
+        print(f"[ERROR] Error in chat: {e}")
         return "Hi! I'm Strontium, your shopping curator. How can I help you today?"
 
 
@@ -410,29 +410,29 @@ def handle_cart_action(user_id: str, parsed: Dict[str, Any]) -> str:
         success, status = cart_manager.add_to_cart(user_id, product_id)
         if success:
             if status == "already_exists":
-                return f"ℹ️ *{name}* is already in your cart"
-            return f"✅ Added *{name}* to your cart!\n\n🛒 View cart: {cart_manager.get_cart_url(user_id)}"
-        return "❌ Could not add to cart"
+                return f"*{name}* is already in your cart"
+            return f"Added *{name}* to your cart!\n\nView cart: {cart_manager.get_cart_url(user_id)}"
+        return "Could not add to cart"
 
     elif action == "add" and target == "wishlist":
         success, status = cart_manager.add_to_wishlist(user_id, product_id)
         if success:
             if status == "already_exists":
-                return f"ℹ️ *{name}* is already in your wishlist"
-            return f"❤️ Saved *{name}* to your wishlist!\n\n💝 View wishlist: {cart_manager.get_wishlist_url(user_id)}"
-        return "❌ Could not add to wishlist"
+                return f"*{name}* is already in your wishlist"
+            return f"Saved *{name}* to your wishlist!\n\nView wishlist: {cart_manager.get_wishlist_url(user_id)}"
+        return "Could not add to wishlist"
 
     elif action == "remove" and target == "cart":
         success, _ = cart_manager.remove_from_cart(user_id, product_id)
         if success:
-            return f"✅ Removed *{name}* from your cart"
-        return f"❌ *{name}* is not in your cart"
+            return f"Removed *{name}* from your cart"
+        return f"*{name}* is not in your cart"
 
     elif action == "remove" and target == "wishlist":
         success, _ = cart_manager.remove_from_wishlist(user_id, product_id)
         if success:
-            return f"✅ Removed *{name}* from your wishlist"
-        return f"❌ *{name}* is not in your wishlist"
+            return f"Removed *{name}* from your wishlist"
+        return f"*{name}* is not in your wishlist"
 
     return "I couldn't understand that cart action. Try 'add to cart' or 'remove from wishlist'."
 
@@ -448,14 +448,14 @@ def handle_cart_view(user_id: str, parsed: Dict[str, Any]) -> str:
     if target == "cart":
         cart = cart_manager.get_cart(user_id)
         if not cart:
-            return "🛒 Your cart is empty.\n\nSearch for products to add!"
-        return f"🛒 You have {len(cart)} item(s) in your cart.\n\nView & manage: {cart_manager.get_cart_url(user_id)}"
+            return "Your cart is empty.\n\nSearch for products to add!"
+        return f"You have {len(cart)} item(s) in your cart.\n\nView & manage: {cart_manager.get_cart_url(user_id)}"
 
     elif target == "wishlist":
         wishlist = cart_manager.get_wishlist(user_id)
         if not wishlist:
-            return "❤️ Your wishlist is empty.\n\nSave products you love for later!"
-        return f"❤️ You have {len(wishlist)} item(s) in your wishlist.\n\nView & manage: {cart_manager.get_wishlist_url(user_id)}"
+            return "Your wishlist is empty.\n\nSave products you love for later!"
+        return f"You have {len(wishlist)} item(s) in your wishlist.\n\nView & manage: {cart_manager.get_wishlist_url(user_id)}"
 
     return "Would you like to see your cart or wishlist?"
 
@@ -507,7 +507,7 @@ def process_message(payload: MessagePayload):
         user_phone = payload.sender
         user_message = payload.message
 
-        print(f"\n📩 Incoming: [{user_phone}] {user_message}")
+        print(f"\n[MSG] Incoming: [{user_phone}] {user_message}")
 
         # Use phone number as user_id (clean it first)
         user_id = user_phone.replace("+", "").replace("-", "").replace(" ", "")
@@ -520,66 +520,66 @@ def process_message(payload: MessagePayload):
                 user_id, payload.context_message_id
             )
             if product_context:
-                print(f"📎 Reply context: {product_context}")
+                print(f"[CONTEXT] Reply context: {product_context}")
                 user_message = enhance_message_with_context(
                     user_message,
                     product_context.get("product_id"),
                     product_context.get("short_id")
                 )
-                print(f"📝 Enhanced message: {user_message}")
+                print(f"[ENHANCED] Enhanced message: {user_message}")
 
         # Step 1: Parse with Strontium
-        print(f"🔍 Parsing query with Strontium...")
+        print(f"[PARSE] Parsing query with Strontium...")
         parsed = strontium.process_query_to_dict(user_message, user_id)
 
         query_type = parsed.get("query_type", "unknown")
-        print(f"📊 Query type: {query_type}")
+        print(f"[TYPE] Query type: {query_type}")
 
         # Step 2: Route based on query type
         if query_type == "search":
-            print(f"🔎 Executing search...")
+            print(f"[SEARCH] Executing search...")
             response = format_search_response(parsed, orchestrator, sql_client, user_id=user_id)
             return response
 
         elif query_type == "detail":
-            print(f"📦 Getting product details...")
+            print(f"[DETAIL] Getting product details...")
             response = format_detail_response(parsed, orchestrator, sql_client)
             return response
 
         elif query_type == "chat":
-            print(f"💬 Handling chat...")
+            print(f"[CHAT] Handling chat...")
             reply_text = format_chat_response(parsed, chat_handler, user_id)
 
         elif query_type == "cart_action":
-            print(f"🛒 Processing cart action...")
+            print(f"[CART] Processing cart action...")
             reply_text = handle_cart_action(user_id, parsed)
 
         elif query_type == "cart_view":
-            print(f"👀 Viewing cart/wishlist...")
+            print(f"[VIEW] Viewing cart/wishlist...")
             reply_text = handle_cart_view(user_id, parsed)
 
         else:
             reply_text = (
-                "🤔 I'm not sure what you're asking for. "
+                "I'm not sure what you're asking for. "
                 "Try:\n"
-                "• Search: _\"Red cotton shirt under $30\"_\n"
-                "• Details: _\"What material is p-123 made of?\"_\n"
-                "• Chat: _\"Hello!\"_ or _\"What can you do?\"_"
+                "- Search: _\"Red cotton shirt under $30\"_\n"
+                "- Details: _\"What material is p-123 made of?\"_\n"
+                "- Chat: _\"Hello!\"_ or _\"What can you do?\"_"
             )
 
-        print(f"✅ Reply: {reply_text[:100]}...")
+        print(f"[OK] Reply: {reply_text[:100]}...")
 
         return {"reply": reply_text}
 
     except Exception as e:
-        print(f"❌ Error processing message: {e}")
+        print(f"[ERROR] Error processing message: {e}")
         import traceback
         traceback.print_exc()
 
         # Return user-friendly error
         return {
             "reply": (
-                "😕 Oops! Something went wrong on my end. "
+                "Oops! Something went wrong on my end. "
                 "Please try again or contact support if the problem persists."
             )
         }
@@ -596,9 +596,9 @@ def process_vendor_message(payload: VendorMessage):
         context_id = payload.context_id  # ID of message being replied to
         incoming_message_id = payload.incoming_message_id  # This message's ID
 
-        print(f"\n📦 Vendor intake from [{user_phone}]: {user_message}")
+        print(f"\n[VENDOR] Vendor intake from [{user_phone}]: {user_message}")
         if context_id:
-            print(f"📎 Replying to message: {context_id}")
+            print(f"[INFO] Replying to message: {context_id}")
 
         reply = vendor_flow.handle(
             user_phone,
@@ -611,7 +611,7 @@ def process_vendor_message(payload: VendorMessage):
         return reply
 
     except Exception as e:
-        print(f"❌ Error in vendor intake: {e}")
+        print(f"[ERROR] Error in vendor intake: {e}")
         import traceback
 
         traceback.print_exc()
@@ -644,7 +644,7 @@ def register_message_ids(payload: Dict[str, Any]):
     if session:
         for wamid, product_index in mappings.items():
             session.product_message_map[wamid] = product_index
-        print(f"📍 Registered {len(mappings)} message mappings for {user_id}")
+        print(f"[INFO] Registered {len(mappings)} message mappings for {user_id}")
         return {"status": "ok", "count": len(mappings)}
 
     return {"status": "warning", "detail": "Session not found"}
@@ -686,11 +686,11 @@ def get_images(user_id: str):
 if __name__ == "__main__":
     import uvicorn
     print("\n" + "="*80)
-    print("🚀 Starting Strontium WhatsApp Backend")
+    print("Starting Strontium WhatsApp Backend")
     print("="*80)
-    print(f"📍 Endpoint: http://localhost:5001/process")
-    print(f"🔧 NVIDIA API: {'Enabled' if config.USE_NVIDIA_LLM else 'Disabled (Mock)'}")
-    print(f"💾 User Data: {config.USER_CONTEXT_DATA_DIR}")
+    print(f"Endpoint: http://localhost:5001/process")
+    print(f"NVIDIA API: {'Enabled' if config.USE_NVIDIA_LLM else 'Disabled (Mock)'}")
+    print(f"User Data: {config.USER_CONTEXT_DATA_DIR}")
     print("="*80 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=5001, log_level="info")

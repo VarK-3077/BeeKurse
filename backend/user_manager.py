@@ -177,7 +177,7 @@ class UserRegistry:
                 with open(REGISTRY_FILE, 'r') as f:
                     self._registry = json.load(f)
             except json.JSONDecodeError:
-                print("⚠️ Registry file corrupted, starting fresh")
+                print("[WARN] Registry file corrupted, starting fresh")
                 self._registry = {}
 
     def _save(self):
@@ -209,6 +209,13 @@ class UserRegistry:
                 self._registry[user_id].update(metadata)
                 self._save()
 
+    def remove(self, user_id: str):
+        """Remove user from registry"""
+        with self._lock:
+            if user_id in self._registry:
+                del self._registry[user_id]
+                self._save()
+
 
 class UserManager:
     """Main user management class"""
@@ -238,7 +245,7 @@ class UserManager:
                     data = json.load(f)
                     return UserInfo(**data)
             except (json.JSONDecodeError, TypeError) as e:
-                print(f"⚠️ Error loading user info for {user_id}: {e}")
+                print(f"[WARN] Error loading user info for {user_id}: {e}")
                 return None
         return None
 
@@ -277,21 +284,78 @@ class UserManager:
 
         return user_info
 
+    def reset_user(self, phone_number: str) -> bool:
+        """
+        Reset a user - clears preferences, cart, wishlist, and message history.
+        Treats user as new on next message.
+
+        Args:
+            phone_number: User's phone number
+
+        Returns:
+            True if reset successful, False otherwise
+        """
+        user_id = self.clean_phone_number(phone_number)
+
+        try:
+            # Remove from registry
+            self.registry.remove(user_id)
+
+            # Delete user folder (contains user_info.json, cart.json, message_history.json)
+            user_folder = self.get_user_folder(user_id)
+            if user_folder.exists():
+                import shutil
+                shutil.rmtree(user_folder)
+                print(f"[RESET] Deleted user folder: {user_folder}")
+
+            print(f"[RESET] User {user_id} has been reset")
+            return True
+
+        except Exception as e:
+            print(f"[ERROR] Failed to reset user {user_id}: {e}")
+            return False
+
+    def _is_reset_command(self, message_text: str) -> bool:
+        """Check if message is a reset preferences command"""
+        normalized = message_text.lower().strip()
+        reset_patterns = {
+            "reset", "reset preferences", "reset my preferences",
+            "start over", "start fresh", "clear preferences",
+            "reset account", "reset my account", "clear my data",
+            "delete my preferences", "delete preferences",
+            "forget me", "forget my preferences"
+        }
+        return normalized in reset_patterns
+
     def process_message(self, phone_number: str, message_text: str) -> Optional[str]:
         """
         Process incoming message for user management
 
         Returns:
             - Onboarding response message if in onboarding flow
+            - Reset confirmation if reset command detected
             - None if user should proceed to normal search flow
         """
         user_id = self.clean_phone_number(phone_number)
+
+        # Check for reset command FIRST (before checking if user exists)
+        if self._is_reset_command(message_text):
+            if self.registry.exists(user_id):
+                self.reset_user(phone_number)
+                print(f"[RESET] User {user_id} requested reset - treating as new user")
+            # Create new user and start onboarding
+            user_info = self.create_new_user(phone_number)
+            return (
+                "Your preferences, cart, and wishlist have been cleared.\n"
+                "Let's start fresh!\n\n" +
+                self._get_onboarding_question(OnboardingState.AWAITING_CONSENT)
+            )
 
         # Check if user exists
         if not self.registry.exists(user_id):
             # New user - create and start onboarding
             user_info = self.create_new_user(phone_number)
-            print(f"👋 New user registered: {user_id}")
+            print(f"[NEW] New user registered: {user_id}")
             return self._get_onboarding_question(OnboardingState.AWAITING_CONSENT)
 
         # Existing user - load info
@@ -299,7 +363,7 @@ class UserManager:
         if not user_info:
             # Registry entry exists but no file - recreate
             user_info = self.create_new_user(phone_number)
-            print(f"🔄 Recreated user info for: {user_id}")
+            print(f"[INFO] Recreated user info for: {user_id}")
             return self._get_onboarding_question(OnboardingState.AWAITING_CONSENT)
 
         # Update activity
