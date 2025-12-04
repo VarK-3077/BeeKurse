@@ -62,8 +62,10 @@ orchestrator = SearchOrchestrator()
 # Chat Handler (with LLM support)
 chat_handler = ChatHandler(use_nvidia=config.USE_NVIDIA_LLM)
 
-# SQL Client for product details (main inventory)
-sql_client = SQLClient(db_path=config.SQL_DB_PATH)
+# SQL Client for product details (uses vendor test DB if configured, otherwise main inventory)
+_sql_db_path = config.VENDOR_TEST_DB_PATH if config.USE_VENDOR_TEST_DB else config.SQL_DB_PATH
+sql_client = SQLClient(db_path=_sql_db_path)
+print(f"[DB] SQL Client using: {_sql_db_path}")
 
 # Vendor intake flow (uses test DB if configured, otherwise main DB)
 # Pass None to let VendorIntakeFlow decide based on USE_VENDOR_TEST_DB config

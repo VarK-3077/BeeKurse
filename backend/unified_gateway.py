@@ -8,6 +8,7 @@ Endpoints:
 - /view/cart/* - Cart web pages
 - /view/wishlist/* - Wishlist web pages
 - /gallery - Proxied to React frontend (port 5400)
+- /vendor - Proxied to Vendor frontend (port 3000)
 - / - Health check
 """
 import os
@@ -51,6 +52,7 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_verify_token_123")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5001/process")
 VENDOR_BACKEND_URL = os.getenv("VENDOR_BACKEND_URL", "http://localhost:5001/vendor/process")
 GALLERY_FRONTEND_URL = os.getenv("GALLERY_FRONTEND_URL", "http://localhost:5400")
+VENDOR_FRONTEND_URL = os.getenv("VENDOR_FRONTEND_URL", "http://localhost:3000")
 WHATSAPP_BUSINESS_NUMBER = os.getenv("WHATSAPP_BUSINESS_NUMBER", "")
 
 # Directory for downloaded vendor images
@@ -283,7 +285,8 @@ def health_check():
             "wishlist": "/wishlist/{user_id}",
             "cart_page": "/view/cart/{user_id}",
             "wishlist_page": "/view/wishlist/{user_id}",
-            "gallery": "/gallery?user={user_id}"
+            "gallery": "/gallery?user={user_id}",
+            "vendor": "/vendor"
         }
     }
 
@@ -696,6 +699,84 @@ async def proxy_gallery(request: Request, path: str = ""):
             )
 
 
+# ==================== Vendor Frontend Proxy ====================
+
+@app.api_route("/vendor", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+@app.api_route("/vendor/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def proxy_vendor(request: Request, path: str = ""):
+    """Proxy requests to the Vendor frontend (port 3000)"""
+    # Vite dev server serves at /vendor/ due to base: '/vendor/' config
+    target_url = f"{VENDOR_FRONTEND_URL}/vendor/{path}" if path else f"{VENDOR_FRONTEND_URL}/vendor/"
+
+    # Preserve query parameters
+    if request.query_params:
+        target_url = f"{target_url}?{request.query_params}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            # Forward the request
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers={k: v for k, v in request.headers.items() if k.lower() not in ['host', 'content-length']},
+                content=await request.body() if request.method in ["POST", "PUT", "PATCH"] else None,
+                timeout=30.0
+            )
+
+            # Return proxied response
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.headers.get("content-type")
+            )
+        except Exception as e:
+            print(f"Vendor proxy error: {e}")
+            return HTMLResponse(
+                content=f"<h1>Vendor Portal Unavailable</h1><p>The vendor frontend is not running on port 3000.</p><p>Start it with: cd vendor_frontend && npm run dev -- --port 3000</p>",
+                status_code=503
+            )
+
+
+# ==================== Vendor API Proxy ====================
+
+VENDOR_API_URL = os.getenv("VENDOR_API_URL", "http://localhost:8003")
+
+@app.api_route("/vendor-api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def proxy_vendor_api(request: Request, path: str = ""):
+    """Proxy requests to the Vendor API (port 8003)"""
+    target_url = f"{VENDOR_API_URL}/{path}"
+
+    # Preserve query parameters
+    if request.query_params:
+        target_url = f"{target_url}?{request.query_params}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            # Forward the request with all headers
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers={k: v for k, v in request.headers.items() if k.lower() not in ['host', 'content-length']},
+                content=await request.body() if request.method in ["POST", "PUT", "PATCH"] else None,
+                timeout=60.0
+            )
+
+            # Return proxied response
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.headers.get("content-type")
+            )
+        except Exception as e:
+            print(f"Vendor API proxy error: {e}")
+            return JSONResponse(
+                content={"error": "Vendor API unavailable", "detail": str(e)},
+                status_code=503
+            )
+
+
 # ==================== Admin Endpoints ====================
 
 @app.post("/admin/set-ngrok-url")
@@ -719,6 +800,7 @@ if __name__ == "__main__":
     print(f"  Cart Page:      http://localhost:8000/view/cart/{{user_id}}")
     print(f"  Wishlist Page:  http://localhost:8000/view/wishlist/{{user_id}}")
     print(f"  Gallery:        http://localhost:8000/gallery?user={{user_id}}")
+    print(f"  Vendor:         http://localhost:8000/vendor")
     print("=" * 70)
     print("  One ngrok tunnel exposes all services!")
     print("  Usage: ngrok http 8000 --url YOUR_URL")

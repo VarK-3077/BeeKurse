@@ -3,7 +3,10 @@ import sqlite3
 import json
 from typing import List, Dict, Any
 
-DB_PATH = "data/databases/sql/inventory.db"
+from config.config import config
+
+# Use vendor test DB if configured, otherwise main inventory
+DB_PATH = config.VENDOR_TEST_DB_PATH if config.USE_VENDOR_TEST_DB else config.SQL_DB_PATH
 PRODUCT_TABLE_NAME = "product_table"
 
 # Load S3 base URL from environment

@@ -160,18 +160,24 @@ def get_password_hash(password):
     return pwd_context.hash(password)
 
 def get_demo_db_path(db_type: str) -> str:
-    """Get the appropriate database path based on demo mode"""
-    if DEMO_CONFIG.get("demo_mode", False):
-        base_path = Path(__file__).parent.parent
-        if db_type == "vendor":
-            return str(base_path / DEMO_CONFIG["mock_databases"]["vendor_db"])
-        elif db_type == "inventory":
-            return str(base_path / DEMO_CONFIG["mock_databases"]["inventory_db"])
-    # Non-demo mode paths
+    """Get the appropriate database path based on demo mode and config flags"""
+    base_path = Path(__file__).parent.parent
+
     if db_type == "vendor":
-        return str(Path(__file__).parent.parent / "data" / "databases" / "sql" / "vendor.db")
+        # Vendor DB: use mock in demo mode, otherwise real vendor.db
+        if DEMO_CONFIG.get("demo_mode", False):
+            return str(base_path / DEMO_CONFIG["mock_databases"]["vendor_db"])
+        return str(base_path / "data" / "databases" / "sql" / "vendor.db")
+
     elif db_type == "inventory":
-        return config.VENDOR_TEST_DB_PATH if config.USE_VENDOR_TEST_DB else config.SQL_DB_PATH
+        # Inventory DB: prioritize USE_VENDOR_TEST_DB flag for consistency with strontium_api
+        # This ensures vendor uploads go to the same DB that WhatsApp searches
+        if config.USE_VENDOR_TEST_DB:
+            return config.VENDOR_TEST_DB_PATH
+        elif DEMO_CONFIG.get("demo_mode", False):
+            return str(base_path / DEMO_CONFIG["mock_databases"]["inventory_db"])
+        return config.SQL_DB_PATH
+
     return None
 
 def add_to_vendor_registry(phone: str):
@@ -208,12 +214,12 @@ def create_vendor_in_sqlite(vendor_data: dict) -> dict:
 
     vendor_id = str(uuid.uuid4())
     cursor.execute('''INSERT INTO vendors
-        (id, username, business_name, email, phone, business_type, address, description, is_active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)''',
+        (id, username, business_name, email, phone, business_type, address, description, is_active, created_at, hashed_password)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)''',
         (vendor_id, vendor_data["username"], vendor_data["business_name"],
          vendor_data["email"], vendor_data["phone"], vendor_data["business_type"],
          vendor_data.get("address"), vendor_data.get("description"),
-         vendor_data["created_at"]))
+         vendor_data["created_at"], vendor_data.get("hashed_password")))
     conn.commit()
     conn.close()
 
@@ -259,11 +265,21 @@ async def get_user_from_db(username: str):
     if DEMO_CONFIG.get("demo_mode", False):
         vendor = get_vendor_from_sqlite(username)
         if vendor:
-            # Need to add hashed_password for auth - fetch from JSON Server as fallback
-            # For demo, we still use JSON Server for auth
-            pass
+            return UserInDB(
+                id=vendor.get("id"),
+                username=vendor.get("username"),
+                email=vendor.get("email"),
+                hashed_password=vendor.get("hashed_password", ""),
+                business_name=vendor.get("business_name"),
+                phone=vendor.get("phone"),
+                business_type=vendor.get("business_type"),
+                address=vendor.get("address"),
+                description=vendor.get("description"),
+                is_active=bool(vendor.get("is_active", True))
+            )
+        return None
 
-    # Use JSON Server (primary)
+    # Use JSON Server (primary) - for non-demo mode
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(f"{JSON_SERVER_URL}/users", params={"username": username})
@@ -276,7 +292,26 @@ async def get_user_from_db(username: str):
             return None
 
 async def get_user_by_email(email: str):
-    """Fetch user by email from JSON Server"""
+    """Fetch user by email from JSON Server or SQLite (demo mode)"""
+    # Demo mode: use SQLite
+    if DEMO_CONFIG.get("demo_mode", False):
+        vendor = get_vendor_by_email_sqlite(email)
+        if vendor:
+            return UserInDB(
+                id=vendor.get("id"),
+                username=vendor.get("username"),
+                email=vendor.get("email"),
+                hashed_password=vendor.get("hashed_password", ""),
+                business_name=vendor.get("business_name"),
+                phone=vendor.get("phone"),
+                business_type=vendor.get("business_type"),
+                address=vendor.get("address"),
+                description=vendor.get("description"),
+                is_active=bool(vendor.get("is_active", True))
+            )
+        return None
+
+    # Use JSON Server (primary) - for non-demo mode
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(f"{JSON_SERVER_URL}/users", params={"email": email})
@@ -289,7 +324,19 @@ async def get_user_by_email(email: str):
             return None
 
 async def create_user_in_db(vendor_data: dict):
-    """Create vendor in JSON Server"""
+    """Create vendor in JSON Server or SQLite (demo mode)"""
+    # Demo mode: use SQLite
+    if DEMO_CONFIG.get("demo_mode", False):
+        try:
+            return create_vendor_in_sqlite(vendor_data)
+        except Exception as e:
+            print(f"Error creating user in SQLite: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not create user"
+            )
+
+    # Use JSON Server (primary) - for non-demo mode
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
@@ -822,7 +869,7 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     print("Starting Vendor API Server")
     print("="*80)
-    print(f"API endpoint: http://0.0.0.0:8000")
+    print(f"API endpoint: http://0.0.0.0:8003")
     print(f"Test DB enabled: {config.USE_VENDOR_TEST_DB}")
     if config.USE_VENDOR_TEST_DB:
         print(f"Using database: {config.VENDOR_TEST_DB_PATH}")
@@ -830,4 +877,4 @@ if __name__ == "__main__":
         print(f"Using database: {config.SQL_DB_PATH}")
     print("="*80 + "\n")
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8003, log_level="info")

@@ -7,6 +7,7 @@
 #   - Unified Gateway (Port 8000) - Routes all external requests
 #   - Strontium API (Port 5001) - Search/Chat backend
 #   - Gallery Frontend (Port 5400) - React app (proxied through gateway)
+#   - Vendor Frontend (Port 3000) - Vendor registration/dashboard
 #   - Single ngrok tunnel on port 8000
 
 set -e
@@ -107,7 +108,7 @@ stop_services() {
     fi
 
     # Kill any remaining processes on our ports
-    for port in 8000 5001 5400; do
+    for port in 8000 5001 5400 3000; do
         local pid=$(lsof -t -i:$port 2>/dev/null || true)
         if [ -n "$pid" ]; then
             kill $pid 2>/dev/null || true
@@ -185,6 +186,37 @@ start_gallery_frontend() {
     fi
 }
 
+# Function to start Vendor Frontend (Port 3000)
+# This serves the vendor registration and dashboard
+start_vendor_frontend() {
+    print_status "Starting Vendor Frontend on port 3000..."
+
+    if check_port 3000; then
+        print_warning "Port 3000 already in use, skipping Vendor Frontend"
+        return 1
+    fi
+
+    cd "$PROJECT_ROOT"
+
+    # Run vendor_frontend on port 3000
+    if [ -d "$PROJECT_ROOT/vendor_frontend" ]; then
+        cd "$PROJECT_ROOT/vendor_frontend"
+        if [ -d "node_modules" ]; then
+            npm run dev -- --port 3000 --host > "$LOG_DIR/vendor_frontend.log" 2>&1 &
+            echo $! >> "$PID_FILE"
+            wait_for_service 3000 "Vendor Frontend"
+        else
+            print_warning "vendor_frontend dependencies not installed. Run: cd vendor_frontend && npm install"
+            return 1
+        fi
+    else
+        print_warning "vendor_frontend directory not found"
+        return 1
+    fi
+
+    cd "$PROJECT_ROOT"
+}
+
 # Function to start single ngrok tunnel for Unified Gateway (port 8000)
 start_ngrok() {
     print_status "Starting ngrok tunnel for Unified Gateway (port 8000)..."
@@ -222,6 +254,7 @@ start_ngrok() {
         echo "  - Wishlist:   $tunnel_url/wishlist/{user_id}"
         echo "  - Cart Page:  $tunnel_url/view/cart/{user_id}"
         echo "  - Gallery:    $tunnel_url/gallery?user={user_id}"
+        echo "  - Vendor:     $tunnel_url/vendor"
     fi
 }
 
@@ -243,6 +276,7 @@ usage() {
     echo "  - Unified Gateway     (Port 8000) - Routes all external requests"
     echo "  - Strontium API       (Port 5001) - Search/Chat backend"
     echo "  - Gallery Frontend    (Port 5400) - React app (proxied through gateway)"
+    echo "  - Vendor Frontend     (Port 3000) - Vendor registration/dashboard"
     echo "  - Single ngrok tunnel (Port 8000 -> public URL)"
     echo ""
     echo "All services available at single ngrok URL:"
@@ -250,6 +284,7 @@ usage() {
     echo "  - Cart API:   /cart/{user_id}"
     echo "  - Cart Page:  /view/cart/{user_id}"
     echo "  - Gallery:    /gallery?user={user_id}"
+    echo "  - Vendor:     /vendor"
     echo ""
 }
 
@@ -259,19 +294,21 @@ show_status() {
     echo -e "${CYAN}BeeKurse Services Status${NC}"
     echo "=========================="
 
-    for port in 8000 5001 5400; do
+    for port in 8000 5001 5400 3000; do
         if check_port $port; then
             local pid=$(lsof -t -i:$port 2>/dev/null | head -1)
             case $port in
                 8000) print_success "Unified Gateway (Port $port): Running (PID: $pid)" ;;
                 5001) print_success "Strontium API (Port $port): Running (PID: $pid)" ;;
                 5400) print_success "Gallery Frontend (Port $port): Running (PID: $pid)" ;;
+                3000) print_success "Vendor Frontend (Port $port): Running (PID: $pid)" ;;
             esac
         else
             case $port in
                 8000) print_error "Unified Gateway (Port $port): Not running" ;;
                 5001) print_error "Strontium API (Port $port): Not running" ;;
                 5400) print_error "Gallery Frontend (Port $port): Not running" ;;
+                3000) print_error "Vendor Frontend (Port $port): Not running" ;;
             esac
         fi
     done
@@ -287,6 +324,7 @@ show_status() {
             echo "    Webhook:   $tunnel_url/webhook"
             echo "    Cart:      $tunnel_url/view/cart/{user_id}"
             echo "    Gallery:   $tunnel_url/gallery?user={user_id}"
+            echo "    Vendor:    $tunnel_url/vendor"
         fi
     else
         print_warning "ngrok: Not running"
@@ -309,6 +347,7 @@ show_logs() {
     echo "  tail -f $LOG_DIR/unified_gateway.log"
     echo "  tail -f $LOG_DIR/strontium_api.log"
     echo "  tail -f $LOG_DIR/gallery_frontend.log"
+    echo "  tail -f $LOG_DIR/vendor_frontend.log"
     echo "  tail -f $LOG_DIR/ngrok.log"
     echo ""
 }
@@ -334,11 +373,15 @@ start_all() {
     start_gallery_frontend
     sleep 1
 
-    # 3. Start Unified Gateway (replaces whatsapp_bot + cart_api)
+    # 3. Start Vendor Frontend (registration/dashboard)
+    start_vendor_frontend
+    sleep 1
+
+    # 4. Start Unified Gateway (replaces whatsapp_bot + cart_api)
     start_unified_gateway
     sleep 1
 
-    # 4. Start single ngrok tunnel
+    # 5. Start single ngrok tunnel
     start_ngrok
 
     echo ""

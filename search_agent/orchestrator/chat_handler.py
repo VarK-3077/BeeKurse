@@ -22,8 +22,17 @@ except ImportError:
     ChatNVIDIA = None
 
 
+def _get_vendor_registration_url() -> str:
+    """Get the vendor registration URL from NGROK_URL or fallback to localhost"""
+    ngrok_url = os.getenv("NGROK_URL", "").strip()
+    if ngrok_url:
+        return f"{ngrok_url}/vendor"
+    return "http://localhost:3000/vendor"
+
+
 # System prompt for chat responses (kept concise)
-CHAT_SYSTEM_PROMPT = """You are Strontium, a friendly sales assistant at BeeKurse e-commerce.
+# Note: {vendor_url} is injected dynamically at runtime
+CHAT_SYSTEM_PROMPT_TEMPLATE = """You are Strontium, a friendly sales assistant at BeeKurse e-commerce.
 
 IDENTITY:
 - Your name is Strontium. Introduce yourself when appropriate.
@@ -33,7 +42,7 @@ IDENTITY:
 BEHAVIOR:
 - Warm, professional, concise (1-3 sentences max)
 - Guide conversations toward shopping when natural
-- If user sounds like a vendor (wants to upload/sell products, manage inventory, become a seller), tell them: "This chat is for customers. To sell on BeeKurse, register as a vendor at: http://localhost:3000/vendor"
+- If user sounds like a vendor (wants to upload/sell products, manage inventory, become a seller), tell them: "This chat is for customers. To sell on BeeKurse, register as a vendor at: {vendor_url}"
 
 OUTPUT ONLY your response. NO notes, explanations, or meta-commentary.
 {user_context}
@@ -129,7 +138,12 @@ class ChatHandler:
             try:
                 # Load user context if user_id provided
                 user_context = self._load_user_context(user_id)
-                prompt = CHAT_SYSTEM_PROMPT.format(message=message, user_context=user_context)
+                vendor_url = _get_vendor_registration_url()
+                prompt = CHAT_SYSTEM_PROMPT_TEMPLATE.format(
+                    message=message,
+                    user_context=user_context,
+                    vendor_url=vendor_url
+                )
                 response = self.llm_client.invoke(prompt)
 
                 # Strip <think> tags from response

@@ -23,7 +23,7 @@ const InputFiles = () => {
     setIsUploading(true);
 
     try {
-      await axios.post("http://localhost:8003/files", formData, {
+      await axios.post("/vendor-api/files", formData, {
         headers: {
           "Content-Type": "multipart/form-data",
           Authorization: `Bearer ${token}`

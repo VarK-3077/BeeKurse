@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { loginUser } from "../api/auth";
 import { Button } from "../components/ui/button";
 import { Store, User, Lock } from "lucide-react";
@@ -8,16 +9,17 @@ const LoginPage = () => {
   const [password, setPass] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
     setLoading(true);
-    
+
     try {
       const data = await loginUser(username, password);
       localStorage.setItem("token", data.access_token);
-      window.location.href = "/";
+      navigate("/");
     } catch {
       setErr("Invalid username or password");
     } finally {
@@ -92,9 +94,9 @@ const LoginPage = () => {
           {/* Footer Link */}
           <div className="mt-6 text-center">
             <span className="text-slate-400">Don't have an account? </span>
-            <a href="/register" className="text-blue-400 hover:text-blue-300 font-medium transition">
+            <Link to="/register" className="text-blue-400 hover:text-blue-300 font-medium transition">
               Register as vendor
-            </a>
+            </Link>
           </div>
         </div>
 

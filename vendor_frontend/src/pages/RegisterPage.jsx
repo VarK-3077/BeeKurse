@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Store, Mail, Phone, MapPin, Building2, User, Lock } from "lucide-react";
 
@@ -16,6 +17,7 @@ const RegisterPage = () => {
   });
   const [msg, setMsg] = useState("");
   const [errors, setErrors] = useState({});
+  const navigate = useNavigate();
 
   const validateForm = () => {
     const newErrors = {};
@@ -63,7 +65,7 @@ const RegisterPage = () => {
     try {
       // For now, we'll just use username and password for the API
       // You'll need to update your backend to accept additional fields
-      const response = await fetch("http://localhost:8003/register", {
+      const response = await fetch("/vendor-api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -80,7 +82,7 @@ const RegisterPage = () => {
 
       if (response.ok) {
         setMsg("Registration successful! You can now log in.");
-        setTimeout(() => window.location.href = "/login", 2000);
+        setTimeout(() => navigate("/login"), 2000);
       } else {
         setMsg("Username or email already exists.");
       }
@@ -298,9 +300,9 @@ const RegisterPage = () => {
           {/* Footer Link */}
           <div className="mt-6 text-center">
             <span className="text-slate-400">Already have an account? </span>
-            <a href="/login" className="text-blue-400 hover:text-blue-300 font-medium transition">
+            <Link to="/login" className="text-blue-400 hover:text-blue-300 font-medium transition">
               Sign in here
-            </a>
+            </Link>
           </div>
         </div>
       </div>

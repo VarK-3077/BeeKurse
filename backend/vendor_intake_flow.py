@@ -2623,17 +2623,18 @@ class VendorIntakeFlow:
         # Check demo mode
         is_demo = DEMO_CONFIG.get("demo_mode", False)
 
-        # Use vendor test database if configured, or mock DB in demo mode
+        # Use vendor test database if configured (priority), or mock DB in demo mode
         if sql_client is None:
-            if is_demo:
-                # Demo mode: use mock inventory database
+            if config.USE_VENDOR_TEST_DB:
+                # Priority: USE_VENDOR_TEST_DB ensures consistency with strontium_api & vendor_api
+                print(f"[DB] Using VENDOR TEST database: {config.VENDOR_TEST_DB_PATH}")
+                self.sql_client = SQLClient(db_path=config.VENDOR_TEST_DB_PATH)
+            elif is_demo:
+                # Demo mode fallback: use mock inventory database
                 base_path = Path(__file__).parent.parent
                 mock_db_path = str(base_path / DEMO_CONFIG["mock_databases"]["inventory_db"])
                 print(f"🎭 Demo mode: Using MOCK database: {mock_db_path}")
                 self.sql_client = SQLClient(db_path=mock_db_path)
-            elif config.USE_VENDOR_TEST_DB:
-                print(f"Using VENDOR TEST database: {config.VENDOR_TEST_DB_PATH}")
-                self.sql_client = SQLClient(db_path=config.VENDOR_TEST_DB_PATH)
             else:
                 self.sql_client = SQLClient()
         else:

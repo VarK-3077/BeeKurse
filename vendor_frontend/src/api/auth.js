@@ -1,6 +1,7 @@
 import axios from "axios";
 
-const API = "http://localhost:8003";
+// Use relative URL so it works through the gateway proxy
+const API = "/vendor-api";
 
 export const loginUser = async (username, password) => {
   const form = new FormData();

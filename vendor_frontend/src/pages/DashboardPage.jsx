@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import {
   Upload,
@@ -36,6 +37,7 @@ const DashboardPage = () => {
   const [imagePreviews, setImagePreviews] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchVendorInfo();
@@ -44,7 +46,7 @@ const DashboardPage = () => {
   const fetchVendorInfo = async () => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch("http://localhost:8003/users/me", {
+      const response = await fetch("/vendor-api/users/me", {
         headers: {
           "Authorization": `Bearer ${token}`
         }
@@ -60,7 +62,7 @@ const DashboardPage = () => {
 
   const handleLogout = () => {
     localStorage.removeItem("token");
-    window.location.href = "/login";
+    navigate("/login");
   };
 
   const handleImageChange = (e) => {
@@ -178,7 +180,7 @@ const DashboardPage = () => {
       // Add product data as JSON string
       formData.append("product_data", JSON.stringify(productPayload));
       
-      const uploadResponse = await fetch("http://localhost:8003/files/", {
+      const uploadResponse = await fetch("/vendor-api/files/", {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`
