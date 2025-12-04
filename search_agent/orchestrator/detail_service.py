@@ -2,54 +2,52 @@
 Product Detail Service
 
 Answers user questions about specific products by:
-1. Fetching product data from SQL
-2. Querying KG for product properties
-3. Querying VDB for semantic product information
-4. Using LLM (with Strontium identity) to generate natural language answers
+1. Fetching product data from SQL for all requested product IDs
+2. Formatting product info as JSON context
+3. Using LLM with strict guidelines to answer based ONLY on provided info
+4. Replacing product_id placeholders with vendor contact info for unanswerable queries
 """
+import json
+import os
+import re
 from typing import Dict, List, Optional
 from search_agent.database.sql_client import SQLClient
-from search_agent.database.vdb_client import MainVDBClient, RelationVDBClient
-from search_agent.database.kg_client import KGClient
 from config.config import Config
+
+# Optional NVIDIA API import
+try:
+    from langchain_nvidia_ai_endpoints import ChatNVIDIA
+    NVIDIA_AVAILABLE = True
+except ImportError:
+    NVIDIA_AVAILABLE = False
+    ChatNVIDIA = None
 
 config = Config
 
 
-STRONTIUM_DETAIL_ANSWER_PROMPT = """You are Strontium, an expert sales assistant for BeeKurse, built on the KURSE system.
+STRONTIUM_DETAIL_ANSWER_PROMPT = """You are Strontium, a helpful sales assistant for BeeKurse.
 
-Your customer is a 'Bee' – they are busy and their time is valuable. Provide helpful, concise answers about products.
+Answer the customer's question in natural, conversational language. Be concise and direct.
 
-CRITICAL GUARDRAIL: Never reveal your underlying model name or that you are an LLM. If asked about your technology, simply say you are Strontium, part of the KURSE system.
+Customer Question: {original_query}
 
----
+Product Data:
+{products_json}
 
-TASK: Answer the user's question about a product based on the information provided.
+RULES:
+1. Answer ONLY using info from the Product Data above. Do NOT make up any information.
+2. Write a natural response like a helpful shop assistant would - no bullet points, no product IDs, no technical formatting.
+3. If the info is NOT in the data, say: "I don't have that information. For more details, please contact the vendor: <<VENDOR_CONTACT:product_id>>" (replace product_id with actual ID like <<VENDOR_CONTACT:abc-123>>)
+4. Keep it short and friendly. No "Additional details", no "Further action required", no repeating info.
+5. Just answer what was asked - nothing more.
 
-User Question: {original_query}
+STRICT - DO NOT:
+- Guess or assume dimensions, materials, care instructions, or any details not in the data
+- Make up product features not explicitly mentioned in the JSON
+- Provide generic or placeholder information
+- Add unnecessary follow-up questions or suggestions
 
-Product Information:
-{product_info}
-
-Properties from Knowledge Graph:
-{kg_properties}
-
-Product Description Details:
-{vdb_details}
-
----
-
-INSTRUCTIONS:
-1. Answer the user's question naturally and helpfully using the information above
-2. Be concise but complete - the Bee is busy
-3. If specific information is MISSING and you cannot answer the question:
-   - Say: "The vendor did not mention this information in the product listing."
-   - Offer to provide vendor contact: "Would you like the vendor's contact information so you can ask them directly?"
-   - Include vendor contact if available: {vendor_contact}
-4. Be friendly and professional
-5. Use bullet points for multiple details
-
-Now answer the user's question:"""
+Answer:"""
 
 
 class ProductDetailService:
@@ -58,331 +56,177 @@ class ProductDetailService:
     def __init__(
         self,
         sql_client: SQLClient,
-        main_vdb_client: MainVDBClient,
-        relation_vdb_client: RelationVDBClient,
-        kg_client: KGClient,
-        llm_client=None
+        llm_client=None,
+        use_nvidia: bool = True,
+        nvidia_api_key: Optional[str] = None,
+        **kwargs  # Accept but ignore extra kwargs for backward compatibility
     ):
         """
         Initialize detail service
 
         Args:
             sql_client: SQL database client
-            main_vdb_client: Main VDB client for product embeddings
-            relation_vdb_client: Relation VDB client
-            kg_client: Knowledge Graph client
-            llm_client: LLM client for generating answers (optional, will use mock if None)
+            llm_client: LLM client for generating answers (optional)
+            use_nvidia: If True, use NVIDIA API for responses (default: True)
+            nvidia_api_key: NVIDIA API key (uses env var if not provided)
         """
         self.sql_client = sql_client
-        self.main_vdb = main_vdb_client
-        self.relation_vdb = relation_vdb_client
-        self.kg_client = kg_client
-        self.llm_client = llm_client
-        self.use_mock = llm_client is None
+        self.llm_client = None
+        self.use_mock = True
+
+        # Initialize NVIDIA LLM if enabled
+        if use_nvidia and NVIDIA_AVAILABLE:
+            api_key = nvidia_api_key or os.getenv("NVIDIA_API_KEY")
+            if api_key:
+                try:
+                    self.llm_client = ChatNVIDIA(
+                        model="nvidia/llama-3.3-nemotron-super-49b-v1",  # Use v1 (NOT v1.5)
+                        api_key=api_key,
+                        temperature=0.0,  # Deterministic for factual answers
+                        max_tokens=4096,  # High token limit for detailed responses
+                    ).with_thinking_mode(enabled=False)  # Disable thinking to avoid incomplete output
+                    self.use_mock = False
+                    print("✅ DetailService: LLM initialized")
+                except Exception as e:
+                    print(f"⚠️ DetailService: LLM init failed: {e}, using mock")
+        elif llm_client:
+            self.llm_client = llm_client
+            self.use_mock = False
+
+    def _resolve_product_ids(self, product_ids: List[str]) -> List[str]:
+        """
+        Resolve any short_ids in the list to full product_ids.
+
+        Short IDs are 4-character alphanumeric (e.g., "44QM", "A1B2").
+        UUIDs and other formats pass through unchanged.
+
+        Args:
+            product_ids: List of product IDs (may include short_ids)
+
+        Returns:
+            List with short_ids resolved to full product_ids
+        """
+        resolved = []
+        short_id_pattern = re.compile(r'^[A-Z0-9]{4}$', re.IGNORECASE)
+
+        for pid in product_ids:
+            if short_id_pattern.match(pid):
+                # Looks like a short_id, try to resolve it
+                full_id = self.sql_client.resolve_short_id(pid)
+                if full_id:
+                    resolved.append(full_id)
+                else:
+                    # Keep original if resolution fails (will show "not found")
+                    resolved.append(pid)
+            else:
+                # UUID or other format, use as-is
+                resolved.append(pid)
+
+        return resolved
 
     def answer_detail_query(
         self,
-        product_id: str,
-        original_query: str,
-        properties_to_explain: List[str],
-        relation_types: List[str],
-        query_keywords: List[str]
+        product_ids: List[str],
+        original_query: str
     ) -> str:
         """
-        Answer a detail query about a product
+        Answer a detail query about one or more products
 
         Args:
-            product_id: Product ID
+            product_ids: List of product IDs to get details about
             original_query: User's original question
-            properties_to_explain: Properties user wants to know about
-            relation_types: Relation types for those properties
-            query_keywords: Keywords to search in descriptions
 
         Returns:
             Natural language answer as string
         """
-        # Step 1: Fetch product from SQL
-        product = self.sql_client.get_product_by_id(product_id)
-        if not product:
-            return f"I'm sorry, I couldn't find product {product_id} in our system."
+        # Step 0: Resolve any short_ids to full product_ids
+        product_ids = self._resolve_product_ids(product_ids)
 
-        # Step 2: Fetch vendor information
-        vendor_contact = self._get_vendor_contact(product.store)
+        # Step 1: Fetch all products from SQL
+        products = self.sql_client.get_products_by_ids(product_ids)
 
-        # Step 3: Query Relation VDB to get similar relations
-        similar_relations = self._query_relation_vdb(relation_types)
+        if not products:
+            return f"I'm sorry, I couldn't find the product(s) {', '.join(product_ids)} in our system."
 
-        # Step 4: Query KG for product properties
-        kg_properties = self._query_kg_properties(
-            product_id,
-            product.subcategory,
-            similar_relations
-        )
+        # Step 2: Format products as JSON for context
+        products_json = self._format_products_as_json(products)
 
-        # Step 5: Query Main VDB for semantic product information
-        vdb_details = self._query_main_vdb_for_details(
-            product.prod_name,
-            product.category,
-            product.subcategory,
-            properties_to_explain,
-            query_keywords
-        )
-
-        # Step 6: Build context for LLM
-        product_info = self._format_product_info(product)
-        kg_properties_str = self._format_kg_properties(kg_properties)
-        vdb_details_str = self._format_vdb_details(vdb_details)
-        vendor_contact_str = self._format_vendor_contact(vendor_contact)
-
-        # Step 7: Generate answer with LLM
+        # Step 3: Generate answer with LLM
         answer = self._generate_answer(
             original_query=original_query,
-            product_info=product_info,
-            kg_properties=kg_properties_str,
-            vdb_details=vdb_details_str,
-            vendor_contact=vendor_contact_str
+            products_json=products_json
         )
+
+        # Step 4: Replace vendor contact placeholders with actual info
+        answer = self._replace_vendor_placeholders(answer, products)
 
         return answer
 
-    def _get_vendor_contact(self, store_id: str) -> Optional[Dict]:
+    def _format_products_as_json(self, products: Dict) -> str:
         """
-        Get vendor contact information from vendor SQL table
+        Format products as JSON string for LLM context.
+        Each product is clearly labeled with its product_id.
 
         Args:
-            store_id: Store/vendor ID
+            products: Dict mapping product_id to SQLProduct
 
         Returns:
-            Dict with vendor name and contact, or None if not found
+            JSON formatted string with all product information
         """
-        # Try to get vendor from SQL
-        # Assuming there's a vendors table with store_id, name, and phone
-        try:
-            vendor = self.sql_client.get_vendor_by_id(store_id)
-            if vendor:
-                return {
-                    "name": vendor.get("name", store_id),
-                    "phone": vendor.get("phone", "N/A")
-                }
-        except Exception:
-            pass
+        products_list = []
 
-        return None
+        for product_id, product in products.items():
+            product_dict = {
+                "product_id": product.product_id,
+                "name": product.prod_name,
+                "category": product.category,
+                "subcategory": product.subcategory,
+                "price": product.price,
+                "brand": product.brand,
+                "colour": product.colour,
+                "description": product.description,
+                "dimensions": product.dimensions,
+                "size": product.size,
+                "stock": product.stock,
+                "rating": product.rating,
+                "quantity": product.quantity,
+                "quantity_unit": product.quantityunit,
+                "store_id": product.store,
+            }
 
-    def _query_relation_vdb(self, relation_types: List[str]) -> List[str]:
-        """
-        Query Relation VDB to find similar relations
+            # Add other_properties if present
+            if product.other_properties:
+                product_dict["other_properties"] = product.other_properties
 
-        Args:
-            relation_types: Initial relation types from Strontium
+            # Remove None values for cleaner output
+            product_dict = {k: v for k, v in product_dict.items() if v is not None}
 
-        Returns:
-            List of relevant relation types (top 3-5)
-        """
-        if not relation_types or relation_types == ["*"]:
-            return []
+            products_list.append(product_dict)
 
-        all_relations = []
-        for relation_type in relation_types:
-            try:
-                results = self.relation_vdb.search_relations(
-                    relation_query=relation_type,
-                    top_k=3
-                )
-                all_relations.extend([r.id for r in results])
-            except Exception:
-                pass
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_relations = []
-        for rel in all_relations:
-            if rel not in seen:
-                seen.add(rel)
-                unique_relations.append(rel)
-
-        return unique_relations[:5]  # Top 5 unique relations
-
-    def _query_kg_properties(
-        self,
-        product_id: str,
-        subcategory: str,
-        relation_types: List[str]
-    ) -> Dict[str, List[str]]:
-        """
-        Query Knowledge Graph for product properties
-
-        Args:
-            product_id: Product ID
-            subcategory: Product subcategory
-            relation_types: Relation types to query
-
-        Returns:
-            Dict mapping relation_type -> list of property values
-        """
-        if not relation_types:
-            # Get all properties for this product
-            try:
-                return self.kg_client.get_all_product_properties(product_id)
-            except Exception:
-                return {}
-
-        # Query specific relations
-        properties_by_relation = {}
-        for relation_type in relation_types:
-            try:
-                properties = self.kg_client.get_product_properties_by_relation(
-                    product_id=product_id,
-                    relation_type=relation_type
-                )
-                if properties:
-                    properties_by_relation[relation_type] = properties
-            except Exception:
-                pass
-
-        return properties_by_relation
-
-    def _query_main_vdb_for_details(
-        self,
-        product_name: str,
-        category: str,
-        subcategory: str,
-        properties_to_explain: List[str],
-        query_keywords: List[str]
-    ) -> List[Dict]:
-        """
-        Query Main VDB with property-specific semantic searches
-
-        Args:
-            product_name: Product name from SQL
-            category: Product category for filtering
-            subcategory: Product subcategory
-            properties_to_explain: Properties being asked about
-            query_keywords: Keywords to search
-
-        Returns:
-            List of relevant product matches with similarities
-        """
-        vdb_results = []
-
-        # Query 1: For each property, search "{product_name} has {property}"
-        if properties_to_explain and properties_to_explain != ["*"]:
-            for prop in properties_to_explain:
-                query = f"{product_name} has {prop}"
-                try:
-                    results = self.main_vdb.search_products(
-                        category=category,
-                        subcategory=subcategory,
-                        property_query=query,
-                        top_k=3
-                    )
-                    for result in results:
-                        vdb_results.append({
-                            "query": query,
-                            "product_id": result.id,
-                            "similarity": result.similarity
-                        })
-                except Exception:
-                    pass
-
-        # Query 2: For each keyword, search "{product_name} {keyword}"
-        for keyword in query_keywords:
-            query = f"{product_name} {keyword}"
-            try:
-                results = self.main_vdb.search_products(
-                    category=category,
-                    subcategory=subcategory,
-                    property_query=query,
-                    top_k=3
-                )
-                for result in results:
-                    vdb_results.append({
-                        "query": query,
-                        "product_id": result.id,
-                        "similarity": result.similarity
-                    })
-            except Exception:
-                pass
-
-        return vdb_results
-
-    def _format_product_info(self, product) -> str:
-        """Format product SQL info as string"""
-        info = f"Product ID: {product.product_id}\n"
-        if hasattr(product, 'prod_name') and product.prod_name:
-            info += f"Name: {product.prod_name}\n"
-        info += f"Category: {product.subcategory}\n"
-        info += f"Price: ${product.price}\n"
-        info += f"Stock: {product.stock} units\n"
-        if hasattr(product, 'brand') and product.brand:
-            info += f"Brand: {product.brand}\n"
-        if hasattr(product, 'descrption') and product.descrption:
-            info += f"Description: {product.descrption}\n"
-
-        return info
-
-    def _format_kg_properties(self, kg_properties: Dict[str, List[str]]) -> str:
-        """Format KG properties as string"""
-        if not kg_properties:
-            return "No specific properties found in Knowledge Graph."
-
-        lines = []
-        for relation_type, values in kg_properties.items():
-            lines.append(f"{relation_type}:")
-            for value in values:
-                lines.append(f"  - {value}")
-
-        return "\n".join(lines)
-
-    def _format_vdb_details(self, vdb_details: List[Dict]) -> str:
-        """Format VDB details as string"""
-        if not vdb_details:
-            return "No additional details found in product descriptions."
-
-        lines = ["Semantic search results:"]
-        for detail in vdb_details[:5]:  # Top 5
-            lines.append(f"  - Query: '{detail['query']}' (similarity: {detail['similarity']:.2f})")
-
-        return "\n".join(lines)
-
-    def _format_vendor_contact(self, vendor_contact: Optional[Dict]) -> str:
-        """Format vendor contact as string"""
-        if not vendor_contact:
-            return "Vendor contact information not available."
-
-        return f"Vendor: {vendor_contact['name']}, Phone: {vendor_contact['phone']}"
+        return json.dumps(products_list, indent=2, ensure_ascii=False)
 
     def _generate_answer(
         self,
         original_query: str,
-        product_info: str,
-        kg_properties: str,
-        vdb_details: str,
-        vendor_contact: str
+        products_json: str
     ) -> str:
         """
         Generate natural language answer using LLM
 
         Args:
             original_query: User's question
-            product_info: Formatted product SQL info
-            kg_properties: Formatted KG properties
-            vdb_details: Formatted VDB details
-            vendor_contact: Formatted vendor contact
+            products_json: JSON formatted product information
 
         Returns:
             Natural language answer
         """
         if self.use_mock:
-            return self._mock_answer(original_query, product_info, kg_properties, vendor_contact)
+            return self._mock_answer(original_query, products_json)
 
         # Build prompt
         prompt = STRONTIUM_DETAIL_ANSWER_PROMPT.format(
             original_query=original_query,
-            product_info=product_info,
-            kg_properties=kg_properties,
-            vdb_details=vdb_details,
-            vendor_contact=vendor_contact
+            products_json=products_json
         )
 
         # Call LLM
@@ -393,30 +237,96 @@ class ProductDetailService:
                 return response.content if hasattr(response, 'content') else str(response)
             else:
                 # Fallback to mock
-                return self._mock_answer(original_query, product_info, kg_properties, vendor_contact)
+                return self._mock_answer(original_query, products_json)
         except Exception as e:
             if config.DEBUG:
                 print(f"LLM error: {e}")
-            return self._mock_answer(original_query, product_info, kg_properties, vendor_contact)
+            return self._mock_answer(original_query, products_json)
 
-    def _mock_answer(
-        self,
-        original_query: str,
-        product_info: str,
-        kg_properties: str,
-        vendor_contact: str
-    ) -> str:
+    def _mock_answer(self, original_query: str, products_json: str) -> str:
         """Generate a mock answer for testing"""
-        answer = f"I'm Strontium, and I'd be happy to help!\n\n"
-        answer += f"Based on what I know about this product:\n\n"
-        answer += f"{product_info}\n"
+        try:
+            products = json.loads(products_json)
+        except json.JSONDecodeError:
+            products = []
 
-        if "No specific properties" not in kg_properties:
-            answer += f"\nProduct Properties:\n{kg_properties}\n"
+        answer = "I'm Strontium, and I'd be happy to help!\n\n"
 
-        answer += f"\nRegarding your question: '{original_query}'\n"
-        answer += f"The vendor did not mention this specific information in the product listing. "
-        answer += f"You can contact them directly for more details.\n\n"
-        answer += f"{vendor_contact}"
+        if len(products) == 1:
+            p = products[0]
+            answer += f"**Product {p.get('product_id')}** ({p.get('name', 'Unknown')})\n\n"
+            answer += f"Based on the available information:\n"
+            if p.get('price'):
+                answer += f"• Price: ₹{p['price']}\n"
+            if p.get('brand'):
+                answer += f"• Brand: {p['brand']}\n"
+            if p.get('colour'):
+                answer += f"• Color: {p['colour']}\n"
+            if p.get('description'):
+                answer += f"• Description: {p['description']}\n"
+            if p.get('size'):
+                answer += f"• Size: {p['size']}\n"
+            if p.get('stock'):
+                answer += f"• In Stock: {p['stock']} units\n"
+
+            # Add vendor contact placeholder for any missing info
+            answer += f"\nFor any other details not mentioned above, please contact the vendor: <<VENDOR_CONTACT:{p.get('product_id')}>>"
+
+        else:
+            answer += f"Here's information about the {len(products)} products:\n\n"
+            for p in products:
+                answer += f"**{p.get('product_id')}** - {p.get('name', 'Unknown')}\n"
+                if p.get('price'):
+                    answer += f"  • Price: ₹{p['price']}\n"
+                if p.get('brand'):
+                    answer += f"  • Brand: {p['brand']}\n"
+                if p.get('colour'):
+                    answer += f"  • Color: {p['colour']}\n"
+                answer += "\n"
+
+            answer += "For more details about any specific product, please contact the respective vendor."
+
+        return answer
+
+    def _replace_vendor_placeholders(self, answer: str, products: Dict) -> str:
+        """
+        Replace <<VENDOR_CONTACT:product_id>> placeholders with actual vendor contact info.
+
+        Args:
+            answer: LLM generated answer with placeholders
+            products: Dict mapping product_id to SQLProduct
+
+        Returns:
+            Answer with vendor contact info replacing placeholders
+        """
+        # Find all placeholders like <<VENDOR_CONTACT:p-123>>
+        pattern = r'<<VENDOR_CONTACT:([^>]+)>>'
+        matches = re.findall(pattern, answer)
+
+        for product_id in matches:
+            product_id = product_id.strip()
+            vendor_contact = None
+
+            # Get vendor info for this product
+            if product_id in products:
+                product = products[product_id]
+                store_id = product.store
+
+                # Try to get vendor contact
+                if store_id:
+                    vendor_info = self.sql_client.get_vendor_by_id(store_id)
+                    if vendor_info:
+                        vendor_contact = f"{vendor_info.get('name', 'Vendor')} ({vendor_info.get('phone', 'N/A')})"
+
+                # Fallback to store_contact from product itself
+                if not vendor_contact and product.store_contact:
+                    vendor_contact = product.store_contact
+
+            # Replace placeholder
+            placeholder = f'<<VENDOR_CONTACT:{product_id}>>'
+            if vendor_contact:
+                answer = answer.replace(placeholder, vendor_contact)
+            else:
+                answer = answer.replace(placeholder, "vendor contact not available")
 
         return answer

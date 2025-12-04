@@ -61,13 +61,11 @@ class SearchOrchestrator:
 
         self.score_combiner = ScoreCombiner(sql_client=self.sql_client)
 
-        # Initialize detail service
+        # Initialize detail service with NVIDIA LLM support
         self.detail_service = ProductDetailService(
             sql_client=self.sql_client,
-            main_vdb_client=self.main_vdb,
-            relation_vdb_client=self.relation_vdb,
-            kg_client=self.kg_client,
-            llm_client=None  # Will use mock for now
+            use_nvidia=config.USE_NVIDIA_LLM,
+            nvidia_api_key=config.NVIDIA_API_KEY
         )
 
         # Initialize chat handler
@@ -230,17 +228,14 @@ class SearchOrchestrator:
 
     def answer_detail_query(self, detail_output: dict) -> str:
         """
-        Answer a detail query about a product
+        Answer a detail query about one or more products
 
         Args:
             detail_output: Strontium detail query output with structure:
                 {
                     "query_type": "detail",
                     "original_query": "...",
-                    "product_id": "...",
-                    "properties_to_explain": [...],
-                    "relation_types": [...],
-                    "query_keywords": [...]
+                    "product_ids": ["p-123", "p-456", ...]
                 }
 
         Returns:
@@ -255,12 +250,19 @@ class SearchOrchestrator:
                 "Use 'detail' for product detail queries."
             )
 
+        # Support both old format (product_id) and new format (product_ids)
+        product_ids = detail_output.get("product_ids")
+        if not product_ids:
+            # Backward compatibility: convert single product_id to list
+            old_product_id = detail_output.get("product_id")
+            if old_product_id:
+                product_ids = [old_product_id]
+            else:
+                return "No product IDs provided in the query."
+
         return self.detail_service.answer_detail_query(
-            product_id=detail_output["product_id"],
-            original_query=detail_output["original_query"],
-            properties_to_explain=detail_output.get("properties_to_explain", ["*"]),
-            relation_types=detail_output.get("relation_types", []),
-            query_keywords=detail_output.get("query_keywords", [])
+            product_ids=product_ids,
+            original_query=detail_output["original_query"]
         )
 
     def handle_chat(self, chat_output: dict) -> str:

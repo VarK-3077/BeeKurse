@@ -264,53 +264,75 @@ def format_detail_response(
 ) -> Dict[str, Any]:
 
     try:
-        product_id = parsed.get("product_id")
-        if not product_id:
+        # Support both new format (product_ids) and old format (product_id)
+        product_ids = parsed.get("product_ids", [])
+        if not product_ids:
+            # Backward compatibility
+            old_product_id = parsed.get("product_id")
+            if old_product_id:
+                product_ids = [old_product_id]
+
+        if not product_ids:
             return {
                 "messages": [
                     {"type": "text", "text": "❌ No product ID found."}
                 ]
             }
 
-        # ⭐ Fetch using your improved extractor
-        # products = sql_client.get_products_by_ids([product_id])
-        products = fetch_products_by_ids([product_id])
-        product = products.get(product_id)
+        # Resolve short_ids (4-char codes like "44QM") to full product_ids
+        import re
+        short_id_pattern = re.compile(r'^[A-Z0-9]{4}$', re.IGNORECASE)
+        resolved_ids = []
+        for pid in product_ids:
+            if short_id_pattern.match(pid):
+                full_id = sql_client.resolve_short_id(pid)
+                resolved_ids.append(full_id if full_id else pid)
+            else:
+                resolved_ids.append(pid)
+        product_ids = resolved_ids
 
-        if not product:
+        # ⭐ Fetch using your improved extractor
+        products = fetch_products_by_ids(product_ids)
+
+        if not products:
             return {
                 "messages": [
-                    {"type": "text", "text": f"❌ No product found for ID {product_id}"}
+                    {"type": "text", "text": f"❌ No product found for ID(s) {', '.join(product_ids)}"}
                 ]
             }
 
         # LLM detail answer
         answer = orchestrator.answer_detail_query(parsed)
 
-        # Build caption
-        caption = (
-            f"📦 *Product Information: {product_id}*\n\n"
-            f"{answer}"
-        )
+        # Build response based on number of products
+        messages = []
 
-        # ⭐ Return multi-message response with product_id for cart tracking
+        # For single product, show image
+        if len(product_ids) == 1 and product_ids[0] in products:
+            product = products[product_ids[0]]
+            messages.append({
+                "type": "image",
+                "url": product["image_url"],
+            })
+
+        # Just use the natural LLM response - no technical headers
+        messages.append({
+            "type": "text",
+            "text": answer
+        })
+
+        # ⭐ Return multi-message response with product_ids for cart tracking
         return {
-            "messages": [
-                {
-                    "type": "image",
-                    "url": product["image_url"],   # dynamic URL from extractor
-                },
-                {
-                    "type": "text",
-                    "text": caption
-                }
-            ],
-            "product_id": product_id,
-            "short_id": product.get("short_id")
+            "messages": messages,
+            "product_ids": product_ids,
+            "product_id": product_ids[0] if product_ids else None,  # Backward compat
+            "short_id": products[product_ids[0]].get("short_id") if product_ids and product_ids[0] in products else None
         }
 
     except Exception as e:
         print("❌ DETAIL ERROR:", e)
+        import traceback
+        traceback.print_exc()
         return {
             "messages": [
                 {"type": "text", "text": "❌ Could not fetch details."}

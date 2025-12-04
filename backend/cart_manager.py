@@ -27,12 +27,17 @@ DEFAULT_BASE_URL = "http://localhost:8002"
 
 def get_base_url() -> str:
     """Get the current base URL (ngrok or localhost)"""
+    # First check env variable
+    env_url = os.getenv("CART_NGROK_URL")
+    if env_url:
+        return env_url.strip()
+    # Fall back to file
     if NGROK_URL_FILE.exists():
         try:
             return NGROK_URL_FILE.read_text().strip()
         except:
             pass
-    return os.getenv("CART_BASE_URL", DEFAULT_BASE_URL)
+    return DEFAULT_BASE_URL
 
 
 def set_base_url(url: str):
@@ -283,10 +288,20 @@ class CartManager:
                     "price": product.get("price"),
                     "rating": product.get("rating"),
                     "store": product.get("store"),
+                    "store_contact": product.get("store_contact"),
+                    "store_location": product.get("store_location"),
                     "image_url": product.get("image_url"),
-                    "brand": product.get("raw", {}).get("brand"),
-                    "colour": product.get("raw", {}).get("colour"),
-                    "size": product.get("raw", {}).get("size"),
+                    "brand": product.get("brand"),
+                    "colour": product.get("colour"),
+                    "size": product.get("size"),
+                    "description": product.get("description"),
+                    "category": product.get("category"),
+                    "subcategory": product.get("subcategory"),
+                    "stock": product.get("stock"),
+                    "quantity": product.get("quantity"),
+                    "quantityunit": product.get("quantityunit"),
+                    "dimensions": product.get("dimensions"),
+                    "other_properties": product.get("other_properties"),
                 })
         return result
 
@@ -310,10 +325,20 @@ class CartManager:
                     "price": product.get("price"),
                     "rating": product.get("rating"),
                     "store": product.get("store"),
+                    "store_contact": product.get("store_contact"),
+                    "store_location": product.get("store_location"),
                     "image_url": product.get("image_url"),
-                    "brand": product.get("raw", {}).get("brand"),
-                    "colour": product.get("raw", {}).get("colour"),
-                    "size": product.get("raw", {}).get("size"),
+                    "brand": product.get("brand"),
+                    "colour": product.get("colour"),
+                    "size": product.get("size"),
+                    "description": product.get("description"),
+                    "category": product.get("category"),
+                    "subcategory": product.get("subcategory"),
+                    "stock": product.get("stock"),
+                    "quantity": product.get("quantity"),
+                    "quantityunit": product.get("quantityunit"),
+                    "dimensions": product.get("dimensions"),
+                    "other_properties": product.get("other_properties"),
                 })
         return result
 

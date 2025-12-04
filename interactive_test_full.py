@@ -93,10 +93,7 @@ class TimedTestRunner:
         detail_start = time.time()
 
         self.detail_service = ProductDetailService(
-            sql_client=self.sql_client,
-            main_vdb_client=self.main_vdb_client,
-            relation_vdb_client=self.relation_vdb_client,
-            kg_client=self.kg_client
+            sql_client=self.sql_client
         )
         print(f"  ✓ Detail Service initialized ({time.time() - detail_start:.3f}s)")
 
@@ -169,25 +166,39 @@ class TimedTestRunner:
 
     def _format_whatsapp_detail_response(self, parsed_dict: Dict, answer: str) -> Dict[str, Any]:
         """Format detail response exactly as /process endpoint would send to WhatsApp"""
-        product_id = parsed_dict.get("product_id")
-        if not product_id:
-            return {"messages": [{"type": "text", "text": "❌ No product ID found."}]}
+        product_ids = parsed_dict.get("product_ids", [])
+        if not product_ids:
+            return {"messages": [{"type": "text", "text": "❌ No product IDs found."}]}
 
-        products = fetch_products_by_ids([product_id])
-        product = products.get(product_id)
+        # Resolve short_ids (4-char codes like "44QM") to full product_ids
+        import re
+        short_id_pattern = re.compile(r'^[A-Z0-9]{4}$', re.IGNORECASE)
+        resolved_ids = []
+        for pid in product_ids:
+            if short_id_pattern.match(pid):
+                full_id = self.sql_client.resolve_short_id(pid)
+                resolved_ids.append(full_id if full_id else pid)
+            else:
+                resolved_ids.append(pid)
+        product_ids = resolved_ids
 
-        if not product:
-            return {"messages": [{"type": "text", "text": f"❌ No product found for ID {product_id}"}]}
+        products = fetch_products_by_ids(product_ids)
 
-        caption = f"📦 *Product Information: {product_id}*\n\n{answer}"
+        if not products:
+            return {"messages": [{"type": "text", "text": f"❌ No products found for IDs {product_ids}"}]}
+
+        # For single product, show image; for multiple, just show text
+        messages = []
+        if len(product_ids) == 1 and product_ids[0] in products:
+            product = products[product_ids[0]]
+            messages.append({"type": "image", "url": product["image_url"]})
+
+        # Just use the natural LLM response - no technical headers
+        messages.append({"type": "text", "text": answer})
 
         return {
-            "messages": [
-                {"type": "image", "url": product["image_url"]},
-                {"type": "text", "text": caption}
-            ],
-            "product_id": product_id,
-            "short_id": product.get("short_id")
+            "messages": messages,
+            "product_ids": product_ids
         }
 
     def _format_whatsapp_chat_response(self, response: str) -> Dict[str, Any]:

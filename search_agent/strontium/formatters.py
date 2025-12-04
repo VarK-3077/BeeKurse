@@ -98,10 +98,7 @@ class QueryFormatter:
         return FormattedDetailOutput(
             query_type="detail",
             original_query=query.original_query,
-            product_id=query.product_id,
-            properties_to_explain=query.properties_to_explain,
-            relation_types=query.relation_types,
-            query_keywords=query.query_keywords
+            product_ids=query.product_ids
         )
 
     def _format_chat(

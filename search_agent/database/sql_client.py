@@ -524,6 +524,91 @@ class SQLClient:
 
         return results
 
+    def get_vendor_by_id(self, store_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get vendor contact information by store/vendor ID.
+
+        First tries to get from product's store_contact field,
+        then falls back to vendor.db if available.
+
+        Args:
+            store_id: Store/vendor ID
+
+        Returns:
+            Dict with vendor name and phone, or None if not found
+        """
+        if not store_id:
+            return None
+
+        # First, try to get store_contact from any product with this store
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT store, store_contact, store_location FROM product_table WHERE store = ? LIMIT 1",
+            (store_id,)
+        )
+
+        row = cursor.fetchone()
+        if row and row['store_contact']:
+            return {
+                "name": store_id,  # Use store_id as name
+                "phone": row['store_contact']
+            }
+
+        # Fallback: Try vendor.db database
+        vendor_db_path = Path(self.db_path).parent / "vendor.db"
+        if vendor_db_path.exists():
+            try:
+                vendor_conn = sqlite3.connect(str(vendor_db_path), check_same_thread=False)
+                vendor_conn.row_factory = sqlite3.Row
+                vendor_cursor = vendor_conn.cursor()
+
+                # Try to find vendor by ID or username
+                vendor_cursor.execute(
+                    "SELECT id, username, business_name, phone FROM users WHERE id = ? OR username = ?",
+                    (store_id, store_id)
+                )
+
+                vendor_row = vendor_cursor.fetchone()
+                vendor_conn.close()
+
+                if vendor_row:
+                    return {
+                        "name": vendor_row['business_name'] or vendor_row['username'],
+                        "phone": vendor_row['phone']
+                    }
+            except Exception:
+                pass
+
+        return None
+
+    def resolve_short_id(self, short_id: str) -> Optional[str]:
+        """
+        Resolve a short_id (e.g., "44QM") to its full product_id.
+
+        Args:
+            short_id: 4-character short ID
+
+        Returns:
+            Full product_id if found, None otherwise
+        """
+        if not short_id:
+            return None
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT product_id FROM product_table WHERE UPPER(short_id) = UPPER(?)",
+            (short_id,)
+        )
+
+        row = cursor.fetchone()
+        if row:
+            return row['product_id']
+        return None
+
     def __enter__(self):
         """Context manager entry"""
         return self

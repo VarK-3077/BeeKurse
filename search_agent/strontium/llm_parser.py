@@ -115,22 +115,15 @@ F. sort_literal: Tuple of (field_name, direction) OR null
    - Set to null if no sorting requested
 
 === FOR DETAIL QUERIES ===
+When user asks for details/information about one or more specific products.
+
 A. original_query: The exact user query (for downstream LLM)
-B. product_id: The specific product
-C. properties_to_explain: Properties user wants to know
-   - General "tell me more" → ["*"]
-   - Specific "what material" → ["material"]
-   - Multiple "care and washing" → ["care_instructions", "washing_method"]
-
-D. relation_types: Relation types for those properties (same as search)
-   - For "material" → ["HAS_MATERIAL"]
-   - For "care instructions" → ["HAS_CARE_INSTRUCTIONS"]
-   - For "*" (all) → ["*"]
-
-E. query_keywords: Keywords to help find info in product descriptions
-   - For "dry cleaning" → ["dry cleaning", "wash", "care"]
-   - For "material" → ["material", "fabric", "made of"]
-   - For "durability" → ["durability", "long-lasting", "quality"]
+B. product_ids: List of product IDs the user is asking about
+   - Single product: ["p-456"] or ["e6139c7d-9291-4362-bce3-64c6fd7a5cab"]
+   - Multiple products: ["p-123", "p-456", "p-789"]
+   - Extract ALL product IDs mentioned in the query
+   - Product IDs can be in formats: "p-123", "A1B2" (short IDs), or UUIDs like "e6139c7d-9291-4362-bce3-64c6fd7a5cab"
+   - IMPORTANT: When query contains "(about <product_id>)" pattern, extract that product_id
 
 === FOR CHAT QUERIES ===
 A. message: The user's message (greeting, question, etc.)
@@ -225,20 +218,42 @@ Query: "What material is p-456 made of?"
 {
   "query_type": "detail",
   "original_query": "What material is p-456 made of?",
-  "product_id": "p-456",
-  "properties_to_explain": ["material"],
-  "relation_types": ["HAS_MATERIAL"],
-  "query_keywords": ["material", "fabric", "made of"]
+  "product_ids": ["p-456"]
 }
 
 Query: "Does p-789 require dry cleaning?"
 {
   "query_type": "detail",
   "original_query": "Does p-789 require dry cleaning?",
-  "product_id": "p-789",
-  "properties_to_explain": ["care_instructions", "washing_method"],
-  "relation_types": ["HAS_CARE_INSTRUCTIONS", "HAS_WASHING_METHOD"],
-  "query_keywords": ["dry cleaning", "wash", "care", "cleaning instructions"]
+  "product_ids": ["p-789"]
+}
+
+Query: "Compare the prices of p-123 and p-456"
+{
+  "query_type": "detail",
+  "original_query": "Compare the prices of p-123 and p-456",
+  "product_ids": ["p-123", "p-456"]
+}
+
+Query: "Tell me about p-111, p-222, and p-333"
+{
+  "query_type": "detail",
+  "original_query": "Tell me about p-111, p-222, and p-333",
+  "product_ids": ["p-111", "p-222", "p-333"]
+}
+
+Query: "WHAT MATERIAL IS THIS MADE OF? (about e6139c7d-9291-4362-bce3-64c6fd7a5cab)"
+{
+  "query_type": "detail",
+  "original_query": "WHAT MATERIAL IS THIS MADE OF? (about e6139c7d-9291-4362-bce3-64c6fd7a5cab)",
+  "product_ids": ["e6139c7d-9291-4362-bce3-64c6fd7a5cab"]
+}
+
+Query: "Is this available in size L? (about abc123-def456)"
+{
+  "query_type": "detail",
+  "original_query": "Is this available in size L? (about abc123-def456)",
+  "product_ids": ["abc123-def456"]
 }
 
 Query: "Hello!"
@@ -474,39 +489,21 @@ class LLMParser:
             )
 
         # Check for detail query patterns
-        if "what" in query_lower or "tell me" in query_lower or "about p-" in query_lower or "does p-" in query_lower:
-            # Extract product ID
-            product_id = "p-456"  # Default
+        if "what" in query_lower or "tell me" in query_lower or "about p-" in query_lower or "does p-" in query_lower or "compare" in query_lower:
+            # Extract all product IDs
+            product_ids = []
             for word in query.split():
                 if word.startswith("p-"):
-                    product_id = word.strip("?.,")
-                    break
+                    product_ids.append(word.strip("?.,"))
 
-            # Determine properties, relation types, and keywords
-            if "material" in query_lower:
-                properties = ["material"]
-                relation_types = ["HAS_MATERIAL"]
-                keywords = ["material", "fabric", "made of"]
-            elif "dry clean" in query_lower or "wash" in query_lower or "care" in query_lower:
-                properties = ["care_instructions", "washing_method"]
-                relation_types = ["HAS_CARE_INSTRUCTIONS", "HAS_WASHING_METHOD"]
-                keywords = ["dry cleaning", "wash", "care", "cleaning instructions"]
-            elif "tell me more" in query_lower or "about" in query_lower:
-                properties = ["*"]
-                relation_types = ["*"]
-                keywords = []
-            else:
-                properties = ["*"]
-                relation_types = ["*"]
-                keywords = []
+            # Default if no product IDs found
+            if not product_ids:
+                product_ids = ["p-456"]
 
             return DetailQueryOutput(
                 query_type="detail",
                 original_query=query,
-                product_id=product_id,
-                properties_to_explain=properties,
-                relation_types=relation_types,
-                query_keywords=keywords
+                product_ids=product_ids
             )
 
         # Search query - simple mock

@@ -52,18 +52,9 @@ class DetailQueryOutput(BaseModel):
         ...,
         description="Original user query for downstream LLM to answer"
     )
-    product_id: str = Field(..., description="Product ID to get details about")
-    properties_to_explain: List[str] = Field(
+    product_ids: List[str] = Field(
         ...,
-        description="Properties user wants to know. ['*'] for all properties"
-    )
-    relation_types: List[str] = Field(
-        default_factory=list,
-        description="Relation types for the properties being queried. E.g., ['HAS_MATERIAL', 'HAS_CARE_INSTRUCTIONS']"
-    )
-    query_keywords: List[str] = Field(
-        default_factory=list,
-        description="Keywords to search in product descriptions. E.g., ['dry cleaning', 'wash', 'care']"
+        description="List of product IDs to get details about"
     )
 
 
@@ -179,10 +170,7 @@ class FormattedDetailOutput(BaseModel):
     """Final output for detail queries"""
     query_type: Literal["detail"] = "detail"
     original_query: str
-    product_id: str
-    properties_to_explain: List[str]
-    relation_types: List[str] = Field(default_factory=list)
-    query_keywords: List[str] = Field(default_factory=list)
+    product_ids: List[str]
 
 
 class FormattedChatOutput(BaseModel):

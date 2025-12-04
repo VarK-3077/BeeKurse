@@ -11,6 +11,18 @@ echo "========================================"
 # Activate virtual environment first (ngrok is installed there)
 source ~/kurse/bin/activate
 
+# Load environment variables from .env file
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
+# Check for CART_NGROK_URL
+if [ -z "$CART_NGROK_URL" ]; then
+    echo "⚠️  CART_NGROK_URL not set in .env file"
+    echo "   Add: CART_NGROK_URL=https://your-domain.ngrok-free.dev"
+    echo ""
+fi
+
 # Check if ngrok is installed
 if ! command -v ngrok &> /dev/null; then
     echo "❌ ngrok not found. Please install ngrok first:"
@@ -33,6 +45,6 @@ sleep 2
 echo ""
 echo "Starting ngrok tunnel..."
 echo ""
-ngrok http 8002 --url https://unribbed-affluently-kody.ngrok-free.dev --pooling-enabled=true
+ngrok http 8002 --url $CART_NGROK_URL --pooling-enabled=true
 # Cleanup on exit
 kill $CART_PID 2>/dev/null
