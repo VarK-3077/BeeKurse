@@ -395,6 +395,14 @@ def handle_cart_action(user_id: str, parsed: Dict[str, Any]) -> str:
     if not product_id:
         return "I couldn't identify which product you're referring to. Please specify a product ID."
 
+    # Resolve short_id (4-char code like "44QM") to full product_id
+    import re
+    short_id_pattern = re.compile(r'^[A-Z0-9]{4}$', re.IGNORECASE)
+    if short_id_pattern.match(product_id):
+        full_id = sql_client.resolve_short_id(product_id)
+        if full_id:
+            product_id = full_id
+
     # Fetch product name for response
     products = fetch_products_by_ids([product_id])
     product = products.get(product_id, {})

@@ -8,6 +8,7 @@ Main orchestrator that coordinates:
 4. Score Combination & Ranking
 """
 import asyncio
+import re
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
@@ -71,6 +72,40 @@ class SearchOrchestrator:
         # Initialize chat handler
         self.chat_handler = ChatHandler()
 
+        # Pattern for short_id detection (4-char alphanumeric like "44QM")
+        self._short_id_pattern = re.compile(r'^[A-Z0-9]{4}$', re.IGNORECASE)
+
+    def _resolve_short_ids_in_query(self, query: SearchQuery) -> SearchQuery:
+        """
+        Resolve any short_ids in prev_productid and prev_products to full product_ids.
+
+        Short IDs are 4-character alphanumeric codes (e.g., "44QM", "A1B2").
+
+        Args:
+            query: SearchQuery that may contain short_ids
+
+        Returns:
+            SearchQuery with short_ids resolved to full product_ids
+        """
+        # Resolve prev_productid if it's a short_id
+        if query.prev_productid and self._short_id_pattern.match(query.prev_productid):
+            full_id = self.sql_client.resolve_short_id(query.prev_productid)
+            if full_id:
+                query.prev_productid = full_id
+
+        # Resolve prev_products list
+        if query.prev_products:
+            resolved = []
+            for pid, props in query.prev_products:
+                if self._short_id_pattern.match(pid):
+                    full_id = self.sql_client.resolve_short_id(pid)
+                    resolved.append((full_id if full_id else pid, props))
+                else:
+                    resolved.append((pid, props))
+            query.prev_products = resolved
+
+        return query
+
     def search(self, query: SearchQuery, user_id: str = None) -> SearchResult:
         """
         Execute unified search
@@ -82,6 +117,9 @@ class SearchOrchestrator:
         Returns:
             SearchResult with ranked product IDs
         """
+        # Resolve any short_ids in query first
+        query = self._resolve_short_ids_in_query(query)
+
         # STEP 0: Embed target subcategory in parallel with HQ check
         target_subcat_embedding = None
         if config.ENABLE_SUBCATEGORY_SCORING:
