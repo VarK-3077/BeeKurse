@@ -3,12 +3,17 @@ Strontium Backend for WhatsApp Integration
 Replaces backend_dummy.py with full search engine capabilities
 """
 import sys
+import os
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
 from typing import Dict, Any, List, Optional
+
+# Load dotenv for environment variables
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
 # Import local modules
 from search_agent.strontium.strontium_agent import StrontiumAgent
@@ -197,35 +202,20 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
         # Pick top 4 products for images
         top_products = [products[pid] for pid in all_product_ids[:4] if pid in products]
 
-        # ✨ Build summary text
-        lines = []
-        lines.append(f"🔍 Found {len(all_product_ids)} product(s):\n")
-
-        for i, p in enumerate(top_products, start=1):
+        # ✨ Build image captions with product details
+        images = []
+        for p in top_products:
             name = p["prod_name"]
-            if len(name) > 40:
-                name = name[:40] + "..."
-
             price = p["price"] or "N/A"
             rating = p["rating"] or "N/A"
-            store = p["store"] or "Unknown"
             short_id = p["short_id"]
 
-            lines.append(f"{i}. *{name}*")
-            lines.append(f"   ₹{price} | ⭐{rating}")
-            lines.append(f"   Store: {store}")
-            lines.append(f"   ID: {short_id}\n")
+            # Caption format: Name | ₹Price | Rating | ID
+            caption = f"{name}\n₹{price} | {rating} | ID: {short_id}"
+            images.append({"url": p["image_url"], "caption": caption})
 
-        if len(all_product_ids) > 4:
-            lines.append(f"_... and {len(all_product_ids) - 4} more results_")
-
-        lines.append("\n💡 Ask about a product using its ID")
-        lines.append("Example: _\"details of A3F1\"_")
-
-        text_message = "\n".join(lines)
-
-        # ✨ Collect image URLs
-        images = [{"url": p["image_url"], "caption": f"{p['prod_name']} (ID: {p['short_id']})"} for p in top_products]
+        # No summary text message - details are in image captions
+        text_message = None
 
         # Get product IDs for the images (for message tracking)
         top_product_ids = all_product_ids[:4]
@@ -233,9 +223,15 @@ def format_search_response(parsed: Dict[str, Any], orchestrator: SearchOrchestra
         # ✨ Build gallery link message (separate)
         gallery_message = None
         if len(all_product_ids) > 4:
+            # Use unified NGROK_URL with /gallery path, fallback to localhost
+            ngrok_url = os.getenv("NGROK_URL", "")
+            if ngrok_url:
+                gallery_base_url = f"{ngrok_url}/gallery"
+            else:
+                gallery_base_url = "http://localhost:5400"
             gallery_message = (
                 f"🖼️ *View all {len(all_product_ids)} products with images:*\n\n"
-                f"http://localhost:5400?user={user_id}"
+                f"{gallery_base_url}?user={user_id}"
             )
 
         return {

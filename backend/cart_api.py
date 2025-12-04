@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import cart manager
-from cart_manager import get_cart_manager, set_base_url
+from .cart_manager import get_cart_manager, set_base_url
 
 app = FastAPI(title="BeeKurse Cart & Wishlist API")
 

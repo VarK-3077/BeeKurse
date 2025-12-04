@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { ShoppingBag, Package, Store, Star, ExternalLink, MessageCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { ShoppingBag, Package, Store, Star, ExternalLink, ShoppingCart, ChevronDown, ChevronUp } from "lucide-react";
 
 export default function App() {
   const [products, setProducts] = useState([]);
@@ -32,7 +32,9 @@ export default function App() {
 
     const fetchData = async () => {
       try {
-        const res = await fetch(`http://localhost:5001/images/${userParam}`);
+        // Use relative URL so it works both locally and via ngrok
+        // The unified gateway proxies /images/{user} to Strontium API
+        const res = await fetch(`/images/${userParam}`);
         
         if (!res.ok) {
           throw new Error(`Failed to fetch: ${res.status}`);
@@ -335,23 +337,23 @@ export default function App() {
                 <div className="pt-4 border-t-2 border-gray-100">
                   <a
                     href={`https://wa.me/15551935302?text=${encodeURIComponent(
-                      `Hi, I'm interested in ${p.prod_name || p.name}${p.product_id ? ` (ID: ${p.product_id.slice(0, 8)})` : ''}`
+                      `add ${p.short_id} to cart`
                     )}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="
                       w-full flex items-center justify-center gap-2
                       text-center font-bold text-white text-base
-                      bg-gradient-to-r from-green-600 via-emerald-600 to-green-700
-                      hover:from-green-700 hover:via-emerald-700 hover:to-green-800
+                      bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700
+                      hover:from-purple-700 hover:via-indigo-700 hover:to-purple-800
                       py-3.5 rounded-xl
                       shadow-lg hover:shadow-xl
                       transition-all duration-300
                       hover:-translate-y-1 active:scale-95
                     "
                   >
-                    <MessageCircle className="w-5 h-5" />
-                    Chat with Store
+                    <ShoppingCart className="w-5 h-5" />
+                    Add to Cart
                   </a>
                 </div>
               </div>

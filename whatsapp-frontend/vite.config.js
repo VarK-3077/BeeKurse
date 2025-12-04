@@ -8,4 +8,16 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  base: '/gallery/',
+  server: {
+    // Allow requests from the unified gateway proxy
+    cors: true,
+    // Proxy /images requests to Strontium API
+    proxy: {
+      '/images': {
+        target: 'http://localhost:5001',
+        changeOrigin: true
+      }
+    }
+  }
 })

@@ -1,0 +1,36 @@
+{
+  "user_id": "user-001",
+  "profile": {
+    "name": "Alice Johnson",
+    "preferences": {
+      "style": ["casual", "athletic"],
+      "brands": ["ComfortWear", "RunFast"],
+      "sizes": {
+        "shirt": "M",
+        "pants": "32",
+        "shoes": "9"
+      },
+      "colors": ["blue", "black", "grey"]
+    }
+  },
+  "purchase_history": [
+    {
+      "product_id": "p-002",
+      "basetype": "jeans",
+      "purchase_date": "2024-01-15",
+      "rating": 5
+    },
+    {
+      "product_id": "p-004",
+      "basetype": "sneakers",
+      "purchase_date": "2024-02-20",
+      "rating": 4
+    },
+    {
+      "product_id": "p-008",
+      "basetype": "sweater",
+      "purchase_date": "2024-03-10",
+      "rating": 5
+    }
+  ]
+}

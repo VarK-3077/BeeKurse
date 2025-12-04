@@ -21,17 +21,17 @@ from scripts.database_operations.sql_extract import fetch_products_by_ids
 USER_DATA_BASE_DIR = Path(__file__).parent.parent / "data" / "user_data"
 NGROK_URL_FILE = Path(__file__).parent.parent / "data" / "ngrok_url.txt"
 
-# Default ngrok URL (update this when ngrok starts)
-DEFAULT_BASE_URL = "http://localhost:8002"
+# Default base URL (unified gateway on port 8000)
+DEFAULT_BASE_URL = "http://localhost:8000"
 
 
 def get_base_url() -> str:
-    """Get the current base URL (ngrok or localhost)"""
-    # First check env variable
-    env_url = os.getenv("CART_NGROK_URL")
+    """Get the current base URL (ngrok or localhost) for unified gateway"""
+    # First check unified NGROK_URL env variable
+    env_url = os.getenv("NGROK_URL")
     if env_url:
         return env_url.strip()
-    # Fall back to file
+    # Fall back to file (written by start_all_services.sh)
     if NGROK_URL_FILE.exists():
         try:
             return NGROK_URL_FILE.read_text().strip()

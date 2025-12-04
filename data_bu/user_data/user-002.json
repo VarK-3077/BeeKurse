@@ -1,0 +1,36 @@
+{
+  "user_id": "user-002",
+  "profile": {
+    "name": "Bob Smith",
+    "preferences": {
+      "style": ["formal", "business casual"],
+      "brands": ["ExecutiveStyle", "ClassicFit"],
+      "sizes": {
+        "shirt": "L",
+        "pants": "34",
+        "blazer": "42R"
+      },
+      "colors": ["black", "navy blue", "white"]
+    }
+  },
+  "purchase_history": [
+    {
+      "product_id": "p-006",
+      "basetype": "trousers",
+      "purchase_date": "2024-01-05",
+      "rating": 5
+    },
+    {
+      "product_id": "p-009",
+      "basetype": "jacket",
+      "purchase_date": "2024-02-12",
+      "rating": 5
+    },
+    {
+      "product_id": "p-005",
+      "basetype": "polo shirt",
+      "purchase_date": "2024-03-01",
+      "rating": 4
+    }
+  ]
+}

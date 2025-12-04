@@ -4,6 +4,7 @@ import json
 import requests
 import tempfile
 import uuid
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, Request
@@ -577,6 +578,9 @@ async def receive_webhook(request: Request):
                             message_history.register_message(
                                 from_number, sent_msg_id, product_ids[i]
                             )
+
+                # Small delay to ensure images are delivered before gallery link
+                time.sleep(0.5)
 
             # 2. Then send summary text
             if text:

@@ -10,8 +10,8 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for minimal envs
     def load_dotenv():
         return None
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file (override=True to use .env over existing env vars)
+load_dotenv(override=True)
 
 
 class Config:
