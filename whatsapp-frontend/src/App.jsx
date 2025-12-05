@@ -336,7 +336,7 @@ export default function App() {
 
                 <div className="pt-4 border-t-2 border-gray-100">
                   <a
-                    href={`https://wa.me/15551935302?text=${encodeURIComponent(
+                    href={`https://wa.me/${import.meta.env.VITE_WHATSAPP_BUSINESS_NUMBER}?text=${encodeURIComponent(
                       `add ${p.short_id} to cart`
                     )}`}
                     target="_blank"

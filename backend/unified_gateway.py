@@ -48,7 +48,9 @@ app = FastAPI(title="BeeKurse Unified Gateway")
 
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_verify_token_123")
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+if not VERIFY_TOKEN:
+    raise ValueError("VERIFY_TOKEN environment variable is required")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5001/process")
 VENDOR_BACKEND_URL = os.getenv("VENDOR_BACKEND_URL", "http://localhost:5001/vendor/process")
 GALLERY_FRONTEND_URL = os.getenv("GALLERY_FRONTEND_URL", "http://localhost:5400")

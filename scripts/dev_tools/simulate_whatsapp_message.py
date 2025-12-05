@@ -2,8 +2,16 @@
 Simulate a WhatsApp message to test the full flow locally
 Bypasses Meta and directly calls the webhook
 """
+import os
 import requests
 import json
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TEST_PHONE_NUMBER = os.getenv("TEST_PHONE_NUMBER")
+if not TEST_PHONE_NUMBER:
+    raise ValueError("TEST_PHONE_NUMBER environment variable is required")
 
 print("="*80)
 print("SIMULATING WHATSAPP MESSAGE".center(80))
@@ -15,7 +23,7 @@ webhook_payload = {
         "changes": [{
             "value": {
                 "messages": [{
-                    "from": "917893127444",
+                    "from": TEST_PHONE_NUMBER,
                     "type": "text",
                     "text": {
                         "body": "Hello!"
@@ -27,7 +35,7 @@ webhook_payload = {
 }
 
 print(f"\n📤 Simulating WhatsApp message:")
-print(f"   From: 917893127444")
+print(f"   From: {TEST_PHONE_NUMBER}")
 print(f"   Message: \"Hello!\"")
 
 # Send to local webhook

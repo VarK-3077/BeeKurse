@@ -1,7 +1,0 @@
-POST http://127.0.0.1:5001/process
-Content-Type: application/json
-
-{
-    "sender": "9999999999",
-    "message": "suit"
-}

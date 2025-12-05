@@ -46,6 +46,9 @@ load_dotenv()
 # Environment variables
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5001/process")
 VENDOR_BACKEND_URL = os.getenv("VENDOR_BACKEND_URL", "http://localhost:5001/vendor/process")
+TEST_PHONE_NUMBER = os.getenv("TEST_PHONE_NUMBER")
+if not TEST_PHONE_NUMBER:
+    raise ValueError("TEST_PHONE_NUMBER environment variable is required")
 
 # Registry paths
 BASE_DIR = Path(__file__).parent.parent.absolute()
@@ -577,7 +580,7 @@ def get_terminal_input() -> Dict[str, Any]:
     print("-" * 60)
 
     # Phone number (with default)
-    default_phone = _last_phone or "917893127444"
+    default_phone = _last_phone or TEST_PHONE_NUMBER
     phone_input = input(f"Phone [{default_phone}]: ").strip()
     if phone_input.lower() == 'quit':
         return {"quit": True}

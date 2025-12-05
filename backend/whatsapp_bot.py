@@ -28,7 +28,9 @@ app = FastAPI()
 # Environment variables
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")                  # Your Meta access token
 PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")       # e.g. "123456789012345"
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_verify_token_123")
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+if not VERIFY_TOKEN:
+    raise ValueError("VERIFY_TOKEN environment variable is required")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5001/process")
 VENDOR_BACKEND_URL = os.getenv("VENDOR_BACKEND_URL", "http://localhost:5001/vendor/process")
 

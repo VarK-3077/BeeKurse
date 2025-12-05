@@ -10,7 +10,9 @@ DB_PATH = config.VENDOR_TEST_DB_PATH if config.USE_VENDOR_TEST_DB else config.SQ
 PRODUCT_TABLE_NAME = "product_table"
 
 # Load S3 base URL from environment
-S3_IMAGE_BASE_URL = os.getenv("S3_IMAGE_BASE_URL", "https://my-img-bucket-123.s3.ap-south-1.amazonaws.com")
+S3_IMAGE_BASE_URL = os.getenv("S3_IMAGE_BASE_URL")
+if not S3_IMAGE_BASE_URL:
+    raise ValueError("S3_IMAGE_BASE_URL environment variable is required")
 
 def fetch_products_by_ids(
     product_ids: List[str],
